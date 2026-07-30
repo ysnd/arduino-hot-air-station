@@ -1,7 +1,11 @@
-#include "HardwareSerial.h"
 #include <Arduino.h>
 
 #define THERMOCOUPLE_PIN A0
+#define HISTORY_SIZE 4 
+
+uint16_t history[HISTORY_SIZE];
+uint8_t history_count = 0;
+uint8_t history_idx = 0;
 
 const uint16_t adc_ambient = 9;
 const uint16_t adc_200 = 587;
@@ -24,6 +28,71 @@ uint16_t clamp_u16(uint16_t val, uint16_t min, uint16_t max) {
 
 int16_t interpolate(int16_t x, int16_t in_min, int16_t in_max, int16_t out_min, int16_t out_max) {
     return out_min + ((x - in_min) * (out_max - out_min)) / (in_max - in_min);
+}
+
+void history_put(uint16_t val) {
+    history[history_idx] = val;
+    history_idx++;
+
+    if (history_idx >= HISTORY_SIZE) {
+        history_idx = 0;
+    }
+    if (history_count < HISTORY_SIZE) {
+        history_count++;
+    }
+}
+
+uint16_t history_avg(void) {
+    if (history_count == 0) {
+        return 0;
+    }
+    uint32_t sum = 0;
+    for (uint8_t i=0; i<history_count ; i++) {
+        sum += history[i];
+    }
+    sum += history_count >> 1;//integer rounding = sum+len/2
+    sum /= history_count;
+    return uint16_t(sum);
+}
+
+uint16_t history_last(void) {
+    if (history_count == 0) {
+        return 0;
+    }
+    uint8_t last_idx;
+    if (history_idx == 0) {
+        last_idx = HISTORY_SIZE - 1;
+    } else {
+        last_idx = history_idx - 1;
+    }
+    return history[last_idx];
+}
+
+uint16_t history_top(void) {
+    if (history_count == 0) {
+        return 0;
+    }
+    return history[0];
+}
+
+float history_dispersion(void) {
+    if (history_count < 3) {
+        return 1000;
+    }
+
+    uint32_t sum = 0;
+    uint32_t avg = history_avg();
+
+    for (uint8_t i=0 ; i<history_count ; i++) {
+        long q = history[i];
+        q -= avg;
+        q *= q;
+
+        sum += q;
+    }
+    sum += history_count << 1; //sum+=history_count*2
+    float d = (float)sum / (float)history_count;
+    return d;
 }
 
 uint16_t adc_to_temp(uint16_t adc) {
@@ -63,5 +132,29 @@ void setup() {
 }
 
 void loop() {
-    delay(200);
+    for (int i = 0 ; i < 5 ; i++) {
+        history_put(i*5);
+    Serial.print("Count = ");
+    Serial.print(history_count);
+    Serial.print(" idx = ");
+    Serial.print(history_idx);
+    Serial.print(" | [");
+    for (uint8_t i =0 ; i < HISTORY_SIZE; i++ ) {
+        Serial.print(history[i]);
+
+        if (i < HISTORY_SIZE -1) {
+            Serial.print(", ");
+        }
+    }
+    Serial.print("]");
+    Serial.print(" last= ");
+    Serial.print(history_last());
+    Serial.print(" avg= ");
+    Serial.print(history_avg());
+    Serial.print(" dis = ");
+    Serial.print(history_dispersion());
+    Serial.print(" top = ");
+    Serial.println(history_top());
+    }
+    delay(500);
 }
