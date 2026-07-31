@@ -15,6 +15,21 @@ const uint16_t temp_ambient = 25;
 const uint16_t temp_200 = 200;
 const uint16_t temp_300 = 300;
 const uint16_t temp_400 = 400;
+const byte PID_DENOMINATOR = 11;
+
+typedef struct {
+    int16_t temp_h0;
+    int16_t temp_h1;
+
+    int32_t power;
+    int32_t i_sum;
+
+    int32_t kp;
+    int32_t ki;
+    int32_t kd;
+
+    bool iterate;
+} pid_t;
 
 uint16_t clamp_u16(uint16_t val, uint16_t min, uint16_t max) {
     if (val < min) {
@@ -126,6 +141,59 @@ uint16_t temp_to_adc(uint16_t temp) {
     }
     return adc;
 }
+
+void pid_reset(pid_t *pid, int16_t temp) {
+    pid->temp_h0 = 0;
+    pid->power = 0;
+    pid->i_sum = 0;
+    pid->iterate = false;
+
+    if ((temp > 0) && (temp < 1000)) {
+        pid->temp_h1 = temp;
+    } else {
+        pid->temp_h1 = 0;
+    }
+}
+
+void pid_init(pid_t *pid) {
+    pid->kp = 638;
+    pid->ki = 196;
+    pid->kd = 1;
+
+    pid_reset(pid, -1);
+}
+
+int32_t pid_round(int32_t power) {
+    power+= (1L << (PID_DENOMINATOR - 1));
+
+    return power >> PID_DENOMINATOR;
+}
+
+int32_t pid_req_power(pid_t *pid, int16_t temp_set, int16_t temp_curr) {
+    if (pid->temp_h0 == 0) {
+        if ((temp_set - temp_curr) < 30) {
+            if (!pid->iterate) {
+                pid->iterate = true;
+                pid->power = 0;
+                pid->i_sum = 0;
+            }
+        }
+        pid->i_sum += temp_set - temp_curr;//error
+        pid->power = pid->kp * (temp_set - temp_curr) + pid->ki * pid->i_sum;
+    } else {
+        int32_t kp = pid->kp * (pid->temp_h1 - temp_curr);
+        int32_t ki = pid->ki * (temp_set - temp_curr);
+        int32_t kd = pid->kd * (pid->temp_h0 + temp_curr - (2 * pid->temp_h1));
+        pid->power += kp + ki + kd; 
+    }
+    if (pid->iterate) {
+        pid->temp_h0 = pid->temp_h1;
+    }
+    pid->temp_h1 = temp_curr;
+
+    return pid_round(pid->power);
+}
+
 
 void setup() {
     Serial.begin(115200); 
