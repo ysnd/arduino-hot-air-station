@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <cstdint>
 
 #define ZC_PIN 2
 #define TRIAC_PIN 4
@@ -9,6 +10,7 @@
 uint16_t history[HISTORY_SIZE];
 uint8_t history_count = 0;
 uint8_t history_idx = 0;
+uint32_t last_zc_ms = 0;
 
 const uint16_t adc_ambient = 9;
 const uint16_t adc_200 = 587;
@@ -39,13 +41,16 @@ typedef struct {
     uint8_t actual_power;
     uint8_t count;
     bool active;
+    bool chill;
+    bool on;
+    bool error;
 } heater_t;
 
 static volatile bool zc_event_flag = false;
 heater_t heater;
 pid_t pid;
 
-uint16_t clamp_u16(uint16_t val, uint16_t min, uint16_t max) {
+int32_t clamp(int32_t val, int32_t min, int32_t max) {
     if (val < min) {
         return min;
     }
@@ -139,7 +144,7 @@ uint16_t adc_to_temp(uint16_t adc) {
 }
 
 uint16_t temp_to_adc(uint16_t temp) {
-    temp = clamp_u16(temp, 150, 500);
+    temp = clamp(temp, 150, 500);
     uint16_t adc;
 
     if (temp >= temp_300){
@@ -217,6 +222,9 @@ void heater_init(heater_t *heater) {
     heater->actual_power = 0;
     heater->count = 0;
     heater->active = false;
+    heater->chill = false;
+    heater->on = true;
+    heater->error = false;
 }
 
 bool heater_sync(heater_t *heater){
@@ -239,9 +247,23 @@ bool heater_sync(heater_t *heater){
 void keep_temp(heater_t *heater, pid_t *pid) {
     uint16_t temp = analogRead(THERMOCOUPLE_PIN);
     history_put(temp);
+
+    if (!heater->chill && heater->on && temp >heater->temp_set + 20) {
+        heater->actual_power = 0;
+        heater->chill = true;
+    }
+    if (heater->chill) {
+        if (temp < heater->temp_set - 8) {
+            heater->chill = false;
+            pid_reset(pid, temp);
+        } else {
+            heater->actual_power = 0;
+            return;
+        }
+    }
     int32_t power = pid_req_power(pid, heater->temp_set, temp);
 
-    heater->actual_power = clamp_u16(power, 0, HEATER_PERIOD);
+    heater->actual_power = (uint16_t)clamp(power, 0, HEATER_PERIOD);
 }
 
 void setup() {
@@ -263,10 +285,15 @@ void loop() {
     interrupts();
 
     if (event) {
+        last_zc_ms = millis();
         bool end_of_period = heater_sync(&heater);
         if (end_of_period) {
             keep_temp(&heater, &pid);
         }
+    }
+    if (millis() - last_zc_ms > 1000) {
+        heater.error = true;
+        heater.actual_power = 0;
     }
 }
 
