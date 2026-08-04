@@ -34,10 +34,15 @@ typedef struct {
     bool iterate;
 } pid_t;
 
-
+typedef struct {
+    uint16_t temp_set;
+    uint8_t actual_power;
+    uint8_t count;
+    bool active;
+} heater_t;
 
 static volatile bool zc_event_flag = false;
-
+heater_t heater;
 pid_t pid;
 
 uint16_t clamp_u16(uint16_t val, uint16_t min, uint16_t max) {
@@ -207,12 +212,44 @@ static void zc_isr() {
     zc_event_flag = true;
 }
 
+void heater_init(heater_t *heater) {
+    heater->temp_set = temp_to_adc(300);
+    heater->actual_power = 0;
+    heater->count = 0;
+    heater->active = false;
+}
+
+bool heater_sync(heater_t *heater){
+    if (++heater->count >= HEATER_PERIOD) {
+        heater->count = 0;
+
+        if ((!heater->active) && (heater->actual_power > 0)) {
+            digitalWrite(TRIAC_PIN, HIGH);
+            heater->active = true;
+        }
+    } else if (heater->count >= heater->actual_power) {
+        if (heater->active) {
+            digitalWrite(TRIAC_PIN, LOW);
+            heater->active = false;
+        }
+    }
+    return (heater->count == 0);
+}
+
+void keep_temp(heater_t *heater, pid_t *pid) {
+    uint16_t temp = analogRead(THERMOCOUPLE_PIN);
+    history_put(temp);
+    int32_t power = pid_req_power(pid, heater->temp_set, temp);
+
+    heater->actual_power = clamp_u16(power, 0, HEATER_PERIOD);
+}
+
 void setup() {
     Serial.begin(115200);
     pinMode(ZC_PIN, INPUT_PULLUP);
     pinMode(TRIAC_PIN, OUTPUT);
     digitalWrite(TRIAC_PIN, LOW);
-
+    heater_init(&heater);
     pid_init(&pid);
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zc_isr, RISING);
 }
@@ -226,7 +263,10 @@ void loop() {
     interrupts();
 
     if (event) {
-
+        bool end_of_period = heater_sync(&heater);
+        if (end_of_period) {
+            keep_temp(&heater, &pid);
+        }
     }
 }
 
