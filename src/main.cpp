@@ -2,6 +2,7 @@
 
 #define ZC_PIN 2
 #define TRIAC_PIN 4
+#define FAN_PIN 9
 #define THERMOCOUPLE_PIN A0
 #define HEATER_PERIOD 100
 #define HISTORY_SIZE 16 
@@ -38,6 +39,7 @@ typedef struct {
 typedef struct {
     uint16_t temp_set;
     uint8_t actual_power;
+    uint8_t fan_speed;
     uint8_t count;
     bool active;
     bool chill;
@@ -265,6 +267,24 @@ void keep_temp(gun_t *gun, pid_t *pid) {
     gun->actual_power = (uint16_t)clamp(power, 0, HEATER_PERIOD);
 }
 
+void fan_init(void) {
+    pinMode(FAN_PIN, OUTPUT);
+    digitalWrite(FAN_PIN, LOW);
+    noInterrupts();
+    TCNT1 = 0;
+    TCCR1A = 0;
+    TCCR1B = _BV(WGM13);
+    ICR1 = 256;
+    TCCR1A |= _BV(COM1A1);
+    TCCR1B |= _BV(CS10);
+    OCR1A = 0;
+    interrupts();
+}
+
+void fan_set(uint8_t duty) {
+    OCR1A = duty;
+}
+
 void setup() {
     Serial.begin(115200);
     pinMode(ZC_PIN, INPUT_PULLUP);
@@ -272,6 +292,7 @@ void setup() {
     digitalWrite(TRIAC_PIN, LOW);
     gun_init(&gun);
     pid_init(&pid);
+    fan_init();
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zc_isr, RISING);
 }
 
@@ -293,6 +314,7 @@ void loop() {
     if (millis() - last_zc_ms > 1000) {
         gun.error = true;
         gun.actual_power = 0;
+        digitalWrite(TRIAC_PIN, LOW);
     }
 }
 
