@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <cstdint>
 
 #define ZC_PIN 2
 #define TRIAC_PIN 4
@@ -44,10 +43,10 @@ typedef struct {
     bool chill;
     bool on;
     bool error;
-} heater_t;
+} gun_t;
 
 static volatile bool zc_event_flag = false;
-heater_t heater;
+gun_t gun;
 pid_t pid;
 
 int32_t clamp(int32_t val, int32_t min, int32_t max) {
@@ -217,53 +216,53 @@ static void zc_isr() {
     zc_event_flag = true;
 }
 
-void heater_init(heater_t *heater) {
-    heater->temp_set = temp_to_adc(300);
-    heater->actual_power = 0;
-    heater->count = 0;
-    heater->active = false;
-    heater->chill = false;
-    heater->on = true;
-    heater->error = false;
+void gun_init(gun_t *gun) {
+    gun->temp_set = temp_to_adc(300);
+    gun->actual_power = 0;
+    gun->count = 0;
+    gun->active = false;
+    gun->chill = false;
+    gun->on = true;
+    gun->error = false;
 }
 
-bool heater_sync(heater_t *heater){
-    if (++heater->count >= HEATER_PERIOD) {
-        heater->count = 0;
+bool gun_sync(gun_t *gun){
+    if (++gun->count >= HEATER_PERIOD) {
+        gun->count = 0;
 
-        if ((!heater->active) && (heater->actual_power > 0)) {
+        if ((!gun->active) && (gun->actual_power > 0)) {
             digitalWrite(TRIAC_PIN, HIGH);
-            heater->active = true;
+            gun->active = true;
         }
-    } else if (heater->count >= heater->actual_power) {
-        if (heater->active) {
+    } else if (gun->count >= gun->actual_power) {
+        if (gun->active) {
             digitalWrite(TRIAC_PIN, LOW);
-            heater->active = false;
+            gun->active = false;
         }
     }
-    return (heater->count == 0);
+    return (gun->count == 0);
 }
 
-void keep_temp(heater_t *heater, pid_t *pid) {
+void keep_temp(gun_t *gun, pid_t *pid) {
     uint16_t temp = analogRead(THERMOCOUPLE_PIN);
     history_put(temp);
 
-    if (!heater->chill && heater->on && temp >heater->temp_set + 20) {
-        heater->actual_power = 0;
-        heater->chill = true;
+    if (!gun->chill && gun->on && temp > gun->temp_set + 20) {
+        gun->actual_power = 0;
+        gun->chill = true;
     }
-    if (heater->chill) {
-        if (temp < heater->temp_set - 8) {
-            heater->chill = false;
+    if (gun->chill) {
+        if (temp < gun->temp_set - 8) {
+            gun->chill = false;
             pid_reset(pid, temp);
         } else {
-            heater->actual_power = 0;
+            gun->actual_power = 0;
             return;
         }
     }
-    int32_t power = pid_req_power(pid, heater->temp_set, temp);
+    int32_t power = pid_req_power(pid, gun->temp_set, temp);
 
-    heater->actual_power = (uint16_t)clamp(power, 0, HEATER_PERIOD);
+    gun->actual_power = (uint16_t)clamp(power, 0, HEATER_PERIOD);
 }
 
 void setup() {
@@ -271,7 +270,7 @@ void setup() {
     pinMode(ZC_PIN, INPUT_PULLUP);
     pinMode(TRIAC_PIN, OUTPUT);
     digitalWrite(TRIAC_PIN, LOW);
-    heater_init(&heater);
+    gun_init(&gun);
     pid_init(&pid);
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zc_isr, RISING);
 }
@@ -286,14 +285,14 @@ void loop() {
 
     if (event) {
         last_zc_ms = millis();
-        bool end_of_period = heater_sync(&heater);
+        bool end_of_period = gun_sync(&gun);
         if (end_of_period) {
-            keep_temp(&heater, &pid);
+            keep_temp(&gun, &pid);
         }
     }
     if (millis() - last_zc_ms > 1000) {
-        heater.error = true;
-        heater.actual_power = 0;
+        gun.error = true;
+        gun.actual_power = 0;
     }
 }
 
