@@ -5,7 +5,9 @@
 #define FAN_PIN 9
 #define THERMOCOUPLE_PIN A0
 #define HEATER_PERIOD 100
-#define HISTORY_SIZE 16 
+#define HISTORY_SIZE 16
+#define MAX_POWER 70
+#define MAX_COOL_FAN 255
 
 uint16_t history[HISTORY_SIZE];
 uint8_t history_count = 0;
@@ -22,6 +24,13 @@ const uint16_t temp_300 = 300;
 const uint16_t temp_400 = 400;
 const byte PID_DENOMINATOR = 11;
 
+typedef enum {
+    POWER_OFF,
+    POWER_ON,
+    POWER_FIXED,
+    POWER_COOLING
+} power_mode_t;
+
 typedef struct {
     int16_t temp_h0;
     int16_t temp_h1;
@@ -37,13 +46,14 @@ typedef struct {
 } pid_t;
 
 typedef struct {
+    power_mode_t mode;
     uint16_t temp_set;
     uint8_t actual_power;
     uint8_t fan_speed;
+    uint8_t fix_power;
     uint8_t count;
     bool active;
     bool chill;
-    bool on;
     bool error;
 } gun_t;
 
@@ -177,9 +187,9 @@ void pid_reset(pid_t *pid, int16_t temp) {
 }
 
 void pid_init(pid_t *pid) {
-    pid->kp = 638;
-    pid->ki = 196;
-    pid->kd = 1;
+    pid->kp = 250;
+    pid->ki = 16;
+    pid->kd = 60;
 
     pid_reset(pid, -1);
 }
@@ -192,10 +202,12 @@ int32_t pid_round(int32_t power) {
 
 int32_t pid_req_power(pid_t *pid, int16_t temp_set, int16_t temp_curr) {
     if (!pid->iterate) {
-        if ((temp_set - temp_curr) < 30) {
-            pid->iterate = true;
-            pid->power = 0;
-            pid->i_sum = 0;
+        if ((temp_set - temp_curr) < 20) {
+            if (!pid->iterate) {
+                pid->iterate = true;
+                pid->power = 0;
+                pid->i_sum = 0;
+            }
         }
         pid->i_sum += temp_set - temp_curr;//error
         pid->power = pid->kp * (temp_set - temp_curr) + pid->ki * pid->i_sum;
@@ -218,13 +230,34 @@ static void zc_isr() {
     zc_event_flag = true;
 }
 
+//fan
+void fan_init(void) {
+    pinMode(FAN_PIN, OUTPUT);
+    digitalWrite(FAN_PIN, LOW);
+    noInterrupts();
+    TCNT1 = 0;
+    TCCR1A = 0;
+    TCCR1B = _BV(WGM13);
+    ICR1 = 256;
+    TCCR1A |= _BV(COM1A1);
+    TCCR1B |= _BV(CS10);
+    OCR1A = 0;
+    interrupts();
+}
+
+void fan_set(uint8_t duty) {
+    OCR1A = duty;
+}
+
 void gun_init(gun_t *gun) {
-    gun->temp_set = temp_to_adc(300);
+    gun->mode = POWER_OFF;
+    gun->temp_set = 300;
+    gun->fan_speed = 120;
     gun->actual_power = 0;
+    gun->fix_power = 0;
     gun->count = 0;
     gun->active = false;
     gun->chill = false;
-    gun->on = true;
     gun->error = false;
 }
 
@@ -248,41 +281,53 @@ bool gun_sync(gun_t *gun){
 void keep_temp(gun_t *gun, pid_t *pid) {
     uint16_t temp = analogRead(THERMOCOUPLE_PIN);
     history_put(temp);
+    int32_t power = 0;
 
-    if (!gun->chill && gun->on && temp > gun->temp_set + 20) {
-        gun->actual_power = 0;
-        gun->chill = true;
-    }
-    if (gun->chill) {
-        if (temp < gun->temp_set - 8) {
-            gun->chill = false;
-            pid_reset(pid, temp);
-        } else {
-            gun->actual_power = 0;
-            return;
+    //safety
+    if (gun->mode == POWER_ON) {
+        if (temp > gun->temp_set + 100) {
+            gun->chill = true;
         }
     }
-    int32_t power = pid_req_power(pid, gun->temp_set, temp);
 
-    gun->actual_power = (uint16_t)clamp(power, 0, HEATER_PERIOD);
-}
+    switch (gun->mode) {
+        case POWER_OFF:
+            power = 0;
+            fan_set(0);
+            break;
 
-void fan_init(void) {
-    pinMode(FAN_PIN, OUTPUT);
-    digitalWrite(FAN_PIN, LOW);
-    noInterrupts();
-    TCNT1 = 0;
-    TCCR1A = 0;
-    TCCR1B = _BV(WGM13);
-    ICR1 = 256;
-    TCCR1A |= _BV(COM1A1);
-    TCCR1B |= _BV(CS10);
-    OCR1A = 0;
-    interrupts();
-}
+        case POWER_ON:
+            fan_set(gun->fan_speed);
+            if (gun->chill) {
+                if (temp < gun->temp_set - 8) {
+                    gun->chill = false;
+                    pid_reset(pid, temp);
+                }
+                else {
+                    power = 0;
+                    break;
+                }
+            }
+            power = pid_req_power(pid, gun->temp_set, temp);
+            power = clamp(power, 0, MAX_POWER);
+            break;
 
-void fan_set(uint8_t duty) {
-    OCR1A = duty;
+        case POWER_FIXED:
+            power = gun->fix_power;
+            fan_set(gun->fan_speed);
+            break;
+
+        case POWER_COOLING:
+            power = 0;
+            fan_set(MAX_COOL_FAN);
+            break;
+    }
+    gun->actual_power = power;
+
+    if (power == 0) {
+        digitalWrite(TRIAC_PIN, LOW);
+        gun->active = false;
+    }
 }
 
 void setup() {
