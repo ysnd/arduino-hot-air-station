@@ -32,6 +32,11 @@ typedef enum {
 } power_mode_t;
 
 typedef struct {
+    uint8_t k;
+    int32_t data;
+} emp_avg_t;
+
+typedef struct {
     int16_t temp_h0;
     int16_t temp_h1;
 
@@ -47,6 +52,7 @@ typedef struct {
 
 typedef struct {
     power_mode_t mode;
+    emp_avg_t sensor;
     uint16_t temp_set;
     uint8_t actual_power;
     uint8_t fan_speed;
@@ -73,6 +79,21 @@ int32_t clamp(int32_t val, int32_t min, int32_t max) {
 
 int16_t interpolate(int16_t x, int16_t in_min, int16_t in_max, int16_t out_min, int16_t out_max) {
     return out_min + ((x - in_min) * (out_max - out_min)) / (in_max - in_min);
+}
+
+void emp_init(emp_avg_t *emp, uint8_t length) {
+    emp->k = length;
+    emp->data = 0;
+}
+
+void emp_update(emp_avg_t *emp, int32_t val) {
+    uint8_t round = emp->k >> 1;
+    emp->data += val - (emp->data + round) / emp->k;
+}
+
+int32_t emp_read(emp_avg_t *emp) {
+    uint8_t round = emp->k >> 1;
+    return (emp->data + round) / emp->k;
 }
 
 void history_put(uint16_t val) {
@@ -251,7 +272,7 @@ void fan_set(uint8_t duty) {
 
 void gun_init(gun_t *gun) {
     gun->mode = POWER_OFF;
-    gun->temp_set = 300;
+    gun->temp_set = temp_to_adc(300);
     gun->fan_speed = 120;
     gun->actual_power = 0;
     gun->fix_power = 0;
@@ -259,6 +280,7 @@ void gun_init(gun_t *gun) {
     gun->active = false;
     gun->chill = false;
     gun->error = false;
+    emp_init(&gun->sensor, 40);
 }
 
 bool gun_sync(gun_t *gun){
@@ -275,11 +297,14 @@ bool gun_sync(gun_t *gun){
             gun->active = false;
         }
     }
+    if (!gun->active) {
+        emp_update(&gun->sensor, analogRead(THERMOCOUPLE_PIN));
+    }
     return (gun->count == 0);
 }
 
 void keep_temp(gun_t *gun, pid_t *pid) {
-    uint16_t temp = analogRead(THERMOCOUPLE_PIN);
+    uint16_t temp = emp_read(&gun->sensor);
     history_put(temp);
     int32_t power = 0;
 
