@@ -9,9 +9,6 @@
 #define MAX_POWER 70
 #define MAX_COOL_FAN 255
 
-uint16_t history[HISTORY_SIZE];
-uint8_t history_count = 0;
-uint8_t history_idx = 0;
 uint32_t last_zc_ms = 0;
 
 const uint16_t adc_ambient = 9;
@@ -37,6 +34,12 @@ typedef struct {
 } emp_avg_t;
 
 typedef struct {
+    uint16_t queue[HISTORY_SIZE];
+    uint8_t len;
+    uint8_t index;
+} history_t;
+
+typedef struct {
     int16_t temp_h0;
     int16_t temp_h1;
 
@@ -53,6 +56,8 @@ typedef struct {
 typedef struct {
     power_mode_t mode;
     emp_avg_t sensor;
+    history_t temp_history;
+    history_t power_history;
     uint16_t temp_set;
     uint8_t actual_power;
     uint8_t fan_speed;
@@ -96,68 +101,70 @@ int32_t emp_read(emp_avg_t *emp) {
     return (emp->data + round) / emp->k;
 }
 
-void history_put(uint16_t val) {
-    history[history_idx] = val;
-    history_idx++;
+void history_init(history_t *h) {
+    h->len = 0;
+    h->index = 0;
+}
 
-    if (history_idx >= HISTORY_SIZE) {
-        history_idx = 0;
-    }
-    if (history_count < HISTORY_SIZE) {
-        history_count++;
+void history_put(history_t *h, uint16_t val) {
+    if (h->len < HISTORY_SIZE) {
+        h->queue[h->len++] = val;
+    } else {
+        h->queue[h->index] = val;
+        if (++h->index >= HISTORY_SIZE) {
+        h->index = 0;
+        }
     }
 }
 
-uint16_t history_avg(void) {
-    if (history_count == 0) {
+uint16_t history_avg(history_t *h) {
+    if (h->len == 0) {
         return 0;
     }
     uint32_t sum = 0;
-    for (uint8_t i=0; i<history_count ; i++) {
-        sum += history[i];
+    for (uint8_t i=0; i<h->len ; i++) {
+        sum += h->queue[i];
     }
-    sum += history_count >> 1;//integer rounding = sum+len/2
-    sum /= history_count;
+    sum += h->len >> 1;//integer rounding = sum+len/2
+    sum /= h->len;
     return uint16_t(sum);
 }
 
-uint16_t history_last(void) {
-    if (history_count == 0) {
+uint16_t history_last(history_t *h) {
+    if (h->len == 0) {
         return 0;
     }
-    uint8_t last_idx;
-    if (history_idx == 0) {
-        last_idx = HISTORY_SIZE - 1;
-    } else {
-        last_idx = history_idx - 1;
+    uint8_t i = h->len - 1;
+    if (h->index) {
+        i = h->index - 1;
     }
-    return history[last_idx];
+    return h->queue[i];
 }
 
-uint16_t history_top(void) {
-    if (history_count == 0) {
+uint16_t history_top(history_t *h) {
+    if (h->len == 0) {
         return 0;
     }
-    return history[0];
+    return h->queue[0];
 }
 
-float history_dispersion(void) {
-    if (history_count < 3) {
+float history_dispersion(history_t *h) {
+    if (h->len < 3) {
         return 1000;
     }
 
     uint32_t sum = 0;
-    uint32_t avg = history_avg();
+    uint32_t avg = history_avg(h);
 
-    for (uint8_t i=0 ; i<history_count ; i++) {
-        long q = history[i];
+    for (uint8_t i=0 ; i<h->len ; i++) {
+        long q = h->queue[i];
         q -= avg;
         q *= q;
 
         sum += q;
     }
-    sum += history_count << 1; //sum+=history_count*2
-    float d = (float)sum / (float)history_count;
+    sum += h->len << 1; //sum+=history_count*2
+    float d = (float)sum / (float)h->len;
     return d;
 }
 
@@ -280,6 +287,8 @@ void gun_init(gun_t *gun) {
     gun->active = false;
     gun->chill = false;
     gun->error = false;
+    history_init(&gun->temp_history);
+    history_init(&gun->power_history);
     emp_init(&gun->sensor, 40);
 }
 
@@ -304,13 +313,13 @@ bool gun_sync(gun_t *gun){
 }
 
 void keep_temp(gun_t *gun, pid_t *pid) {
-    uint16_t temp = emp_read(&gun->sensor);
-    history_put(temp);
+    uint16_t adc = emp_read(&gun->sensor);
+    history_put(&gun->temp_history, adc); 
     int32_t power = 0;
 
     //safety
     if (gun->mode == POWER_ON) {
-        if (temp > gun->temp_set + 100) {
+        if (adc > gun->temp_set + 100) {
             gun->chill = true;
         }
     }
@@ -324,16 +333,16 @@ void keep_temp(gun_t *gun, pid_t *pid) {
         case POWER_ON:
             fan_set(gun->fan_speed);
             if (gun->chill) {
-                if (temp < gun->temp_set - 8) {
+                if (adc < gun->temp_set - 8) {
                     gun->chill = false;
-                    pid_reset(pid, temp);
+                    pid_reset(pid, adc);
                 }
                 else {
                     power = 0;
                     break;
                 }
             }
-            power = pid_req_power(pid, gun->temp_set, temp);
+            power = pid_req_power(pid, gun->temp_set, adc);
             power = clamp(power, 0, MAX_POWER);
             break;
 
@@ -353,6 +362,7 @@ void keep_temp(gun_t *gun, pid_t *pid) {
         digitalWrite(TRIAC_PIN, LOW);
         gun->active = false;
     }
+    history_put(&gun->power_history, gun->actual_power);
 }
 
 void setup() {
