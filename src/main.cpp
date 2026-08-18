@@ -11,8 +11,7 @@
 #define MIN_FAN_SPEED 99
 #define TEMP_GUN_COLD 90
 #define INT_TEMP_MAX 900
-
-uint32_t last_zc_ms = 0;
+#define ZC_TIMEOUT_MS 1500UL
 
 const uint16_t adc_ambient = 9;
 const uint16_t adc_200 = 587;
@@ -73,6 +72,8 @@ typedef struct {
 } gun_t;
 
 static volatile bool zc_event_flag = false;
+uint32_t last_period = 0;
+
 gun_t gun;
 pid_t pid;
 
@@ -260,6 +261,10 @@ int32_t pid_req_power(pid_t *pid, int16_t temp_set, int16_t temp_curr) {
 //ZC
 static void zc_isr() {
     zc_event_flag = true;
+}
+
+bool zc_is_alive(void) {
+    return (millis() - last_period) < ZC_TIMEOUT_MS;
 }
 
 //fan
@@ -494,13 +499,12 @@ void loop() {
     interrupts();
 
     if (event) {
-        last_zc_ms = millis();
         bool end_of_period = gun_sync(&gun);
         if (end_of_period) {
             keep_temp(&gun, &pid);
         }
     }
-    if (millis() - last_zc_ms > 1000) {
+    if (last_period != 0 && !zc_is_alive()) {
         gun.error = true;
         gun.actual_power = 0;
         digitalWrite(TRIAC_PIN, LOW);
