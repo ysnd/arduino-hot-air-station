@@ -307,6 +307,9 @@ bool gun_sync(gun_t *gun){
     if (++gun->count >= HEATER_PERIOD) {
         gun->count = 0;
 
+        //end of power period 
+        last_period = millis();
+
         if ((!gun->active) && (gun->actual_power > 0)) {
             digitalWrite(TRIAC_PIN, HIGH);
             gun->active = true;
