@@ -8,6 +8,9 @@
 #define HISTORY_SIZE 16
 #define MAX_POWER 70
 #define MAX_COOL_FAN 255
+#define MIN_FAN_SPEED 99
+#define TEMP_GUN_COLD 90
+#define INT_TEMP_MAX 900
 
 uint32_t last_zc_ms = 0;
 
@@ -61,6 +64,7 @@ typedef struct {
     uint16_t temp_set;
     uint8_t actual_power;
     uint8_t fan_speed;
+    uint8_t actual_fan;
     uint8_t fix_power;
     uint8_t count;
     bool active;
@@ -122,7 +126,7 @@ uint16_t history_avg(history_t *h) {
         return 0;
     }
     uint32_t sum = 0;
-    for (uint8_t i=0; i<h->len ; i++) {
+    for (uint8_t i=0; i < h->len; i++) {
         sum += h->queue[i];
     }
     sum += h->len >> 1;//integer rounding = sum+len/2
@@ -273,14 +277,16 @@ void fan_init(void) {
     interrupts();
 }
 
-void fan_set(uint8_t duty) {
+void fan_set(gun_t *gun, uint8_t duty) {
     OCR1A = duty;
+    gun->actual_fan = duty;
 }
 
 void gun_init(gun_t *gun) {
     gun->mode = POWER_OFF;
     gun->temp_set = temp_to_adc(300);
     gun->fan_speed = 120;
+    gun->actual_fan = 0;
     gun->actual_power = 0;
     gun->fix_power = 0;
     gun->count = 0;
@@ -312,48 +318,73 @@ bool gun_sync(gun_t *gun){
     return (gun->count == 0);
 }
 
+bool gun_is_cold(gun_t *gun) {
+    return history_avg(&gun->temp_history) < TEMP_GUN_COLD;
+}
+
+void gun_shutdown(gun_t *gun) {
+    digitalWrite(TRIAC_PIN, LOW);
+    fan_set(gun, 0);
+    gun->mode = POWER_OFF;
+    gun->actual_power = 0;
+    gun->active = false;
+    gun->chill = false;
+}
+
+bool gun_is_connected(void) {
+    return true;
+}
+
 void keep_temp(gun_t *gun, pid_t *pid) {
-    uint16_t adc = emp_read(&gun->sensor);
-    history_put(&gun->temp_history, adc); 
+    uint16_t temp_adc = emp_read(&gun->sensor);
+    history_put(&gun->temp_history, temp_adc);
     int32_t power = 0;
 
     //safety
-    if (gun->mode == POWER_ON) {
-        if (adc > gun->temp_set + 100) {
+    if ((temp_adc >= INT_TEMP_MAX + 30) || (temp_adc > gun->temp_set + 100)) {
+        if (gun->mode == POWER_ON) {
             gun->chill = true;
         }
     }
 
     switch (gun->mode) {
         case POWER_OFF:
-            power = 0;
-            fan_set(0);
             break;
 
         case POWER_ON:
-            fan_set(gun->fan_speed);
+            fan_set(gun, gun->fan_speed);
             if (gun->chill) {
-                if (adc < gun->temp_set - 8) {
+                if (temp_adc < gun->temp_set - 8) {
                     gun->chill = false;
-                    pid_reset(pid, adc);
+                    pid_reset(pid, temp_adc);
                 }
                 else {
-                    power = 0;
                     break;
                 }
             }
-            power = pid_req_power(pid, gun->temp_set, adc);
+            power = pid_req_power(pid, gun->temp_set, temp_adc);
             power = clamp(power, 0, MAX_POWER);
             break;
 
         case POWER_FIXED:
             power = gun->fix_power;
-            fan_set(gun->fan_speed);
+            fan_set(gun, gun->fan_speed);
             break;
 
         case POWER_COOLING:
-            power = 0;
-            fan_set(MAX_COOL_FAN);
+            if (gun->actual_fan < MIN_FAN_SPEED) {
+                gun_shutdown(gun);
+            } else {
+                if (gun_is_connected()) {
+                    if (gun_is_cold(gun)) {
+                        gun_shutdown(gun);
+                    } else {
+                        fan_set(gun, MAX_COOL_FAN);
+                    }
+                } else {
+                    gun_shutdown(gun);
+                }
+            }
             break;
     }
     gun->actual_power = power;
