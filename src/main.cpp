@@ -335,6 +335,84 @@ bool gun_is_connected(void) {
     return true;
 }
 
+void gun_switch_power(gun_t *gun, bool on) {
+    switch (gun->mode) {
+        case POWER_OFF :
+            if (gun-> actual_fan == 0) {
+                if (on) {
+                    gun->mode = POWER_ON;
+                }
+            } else {
+                if (on) {
+                    if (gun_is_connected()) {
+                        gun->mode = POWER_ON;
+                    } else {
+                        gun_shutdown(gun);
+                    }
+                } else {
+                    if (gun_is_connected()) {
+                        if (gun_is_cold(gun)) {
+                            gun_shutdown(gun);
+                        } else {
+                            gun->mode = POWER_COOLING;
+                        }
+                    }
+                }
+            }
+            break;
+        case POWER_ON:
+            if (!on) {
+                gun->mode = POWER_COOLING;
+            }
+            break;
+
+        case POWER_FIXED:
+            if (gun->actual_fan) {
+                if (on) {
+                    gun->mode = POWER_ON;
+                } else {
+                    if (gun_is_connected()) {
+                        if (gun_is_cold(gun)) {
+                            gun_shutdown(gun);
+                        } else {
+                            gun->mode = POWER_COOLING;
+                        }
+                    }
+                }
+            } else {
+                if (!on) {
+                    gun_shutdown(gun);
+                }
+            }
+            break;
+
+        case POWER_COOLING:
+            if (gun->actual_fan) {
+                if (on) {
+                    if (gun_is_connected()) {
+                        gun->mode = POWER_ON;
+                    } else {
+                        gun_shutdown(gun);
+                    }
+                } else {
+                    if (gun_is_connected()) {
+                        if (gun_is_cold(gun)) {
+                            gun_shutdown(gun);
+                        }
+                    } else {
+                        gun_shutdown(gun);
+                    }
+                }
+            } else {
+                if (on) {
+                    gun->mode = POWER_ON;
+                }
+            }
+            break;
+    }
+    history_init(&gun->power_history);
+}
+
 void keep_temp(gun_t *gun, pid_t *pid) {
     uint16_t temp_adc = emp_read(&gun->sensor);
     history_put(&gun->temp_history, temp_adc);
