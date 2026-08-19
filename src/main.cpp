@@ -435,6 +435,20 @@ void gun_fix_power(gun_t *gun, uint8_t power) {
     gun->fix_power = power;
 }
 
+uint8_t gun_avg_power_percent(gun_t *gun) {
+    uint8_t percent = 0;
+    if (gun->mode == POWER_FIXED) {
+        percent = interpolate(gun->fix_power, 0, MAX_POWER, 0, 100);
+    } else {
+        percent = interpolate(history_avg(&gun->power_history), 0, MAX_POWER, 0, 100);
+    }
+
+    if (percent > 100) {
+        percent = 100;
+    }
+    return percent;
+}
+
 void keep_temp(gun_t *gun, pid_t *pid) {
     uint16_t temp_adc = emp_read(&gun->sensor);
     history_put(&gun->temp_history, temp_adc);
