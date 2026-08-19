@@ -7,6 +7,7 @@
 #define HEATER_PERIOD 100
 #define HISTORY_SIZE 16
 #define MAX_POWER 70
+#define MAX_FIXED_POWER 70
 #define MAX_COOL_FAN 255
 #define MIN_FAN_SPEED 99
 #define TEMP_GUN_COLD 90
@@ -419,6 +420,19 @@ void gun_switch_power(gun_t *gun, bool on) {
             break;
     }
     history_init(&gun->power_history);
+}
+
+void gun_fix_power(gun_t *gun, uint8_t power) {
+    if (power == 0) {
+        gun_switch_power(gun, false);
+        return;
+    }
+    if (power > MAX_POWER) {
+        power = MAX_POWER;
+    }
+
+    gun->mode = POWER_FIXED;
+    gun->fix_power = power;
 }
 
 void keep_temp(gun_t *gun, pid_t *pid) {
