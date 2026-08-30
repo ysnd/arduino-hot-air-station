@@ -1,3 +1,4 @@
+#include "HardwareSerial.h"
 #include <Arduino.h>
 
 #define ZC_PIN 2
@@ -109,10 +110,24 @@ typedef struct {
     uint32_t press_time;
     uint32_t tick_time;
     bool pressed;
-} button_t; 
+} button_t;
+
+typedef enum {
+    SCREEN_MAIN,
+    SCREEN_CONFIG,
+    SCREEN_CALIB,
+    SCREEN_TUNE,
+    SCREEN_WORK,
+    SCREEN_ERROR
+} screen_id_t;
+
+typedef struct {
+    screen_id_t current;
+} screen_t;
 
 encoder_t encoder;
 button_t enc_button;
+screen_t ui;
 gun_t gun;
 pid_t pid;
 
@@ -264,6 +279,52 @@ bool button_tick(button_t *btn) {
         btn->tick_time = 0;
     }
     return false;
+}
+
+//Screen 
+void screen_init(screen_t *screen) {
+    screen->current = SCREEN_MAIN;
+}
+
+void screen_set(screen_t *screen, screen_id_t next) {
+    screen->current = next;
+}
+
+screen_id_t screen_get(screen_t *screen) {
+    return screen->current;
+}
+
+void screen_rotate(screen_t *screen, int16_t val) {
+    Serial.print("SCREEN ");
+    Serial.print(screen->current);
+    Serial.print(" Rotate ");
+    Serial.println(val);
+}
+
+void screen_short_press(screen_t *screen) {
+    switch (screen->current) {
+        case SCREEN_MAIN:
+            Serial.println("MAIN: short press");
+            break;
+
+        case SCREEN_CONFIG:
+            Serial.println("CONFIG: short press");
+            break;
+
+        default:
+            break;
+    }
+}
+
+void screen_long_press(screen_t *screen) {
+    switch (screen->current) {
+        case SCREEN_MAIN:
+            screen_set(screen, SCREEN_CONFIG);
+            break;
+
+        default:
+            break;
+    }
 }
 
 int32_t clamp(int32_t val, int32_t min, int32_t max) {
@@ -705,6 +766,9 @@ void setup() {
     digitalWrite(TRIAC_PIN, LOW);
     encoder_init(&encoder, ENC_A, ENC_B, 0);
     button_init(&enc_button, ENC_SW);
+    screen_init(&ui);
+    Serial.print("Current screen ");
+    Serial.println(screen_get(&ui));;
     gun_init(&gun);
     pid_init(&pid);
     fan_init();
@@ -722,17 +786,23 @@ void loop() {
 
     static int16_t old_pos = 0;
     int16_t pos = encoder_read(&encoder);
-
+    static uint8_t ui_pos = 0;
     if (pos != old_pos) {
-        Serial.println(pos);
+        //Serial.println(pos);
         old_pos = pos;
+        screen_rotate(&ui, pos);
     }
+    if (screen_get(&ui) != ui_pos) {
+        Serial.print("Current screen ");
+        Serial.println(screen_get(&ui));
+        ui_pos = screen_get(&ui);
+    } 
     if (event) {
         bool end_of_period = gun_sync(&gun);
         if (end_of_period) {
             keep_temp(&gun, &pid);
         }
-    }
+    } 
     if (last_period != 0 && !zc_is_alive()) {
         gun.error = true;
         gun.actual_power = 0;
@@ -743,11 +813,13 @@ void loop() {
 
     switch (evt) {
         case BUTTON_SHORT:
-            Serial.println("SHORT");
+            //Serial.println("SHORT");
+            screen_short_press(&ui);
             break;
 
         case BUTTON_LONG:
-            Serial.println("LONG");
+            //Serial.println("LONG");
+            screen_long_press(&ui);
             break;
 
         default: 
