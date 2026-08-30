@@ -121,8 +121,23 @@ typedef enum {
     SCREEN_ERROR
 } screen_id_t;
 
+typedef enum {
+    MAIN_MODE_TEMP,
+    MAIN_MODE_FAN
+} main_mode_t;
+
+typedef enum {
+    CONFIG_CALIB,
+    CONFIG_TUNE,
+    CONFIG_SAVE,
+    CONFIG_CANCEL,
+    CONFIG_DEFAULTS
+} config_mode_t;
+
 typedef struct {
     screen_id_t current;
+    main_mode_t main_mode;
+    config_mode_t config_mode;
 } screen_t;
 
 encoder_t encoder;
@@ -284,6 +299,8 @@ bool button_tick(button_t *btn) {
 //Screen 
 void screen_init(screen_t *screen) {
     screen->current = SCREEN_MAIN;
+    screen->main_mode = MAIN_MODE_TEMP;
+    screen->config_mode = CONFIG_CALIB;
 }
 
 void screen_set(screen_t *screen, screen_id_t next) {
@@ -294,21 +311,76 @@ screen_id_t screen_get(screen_t *screen) {
     return screen->current;
 }
 
-void screen_rotate(screen_t *screen, int16_t val) {
-    Serial.print("SCREEN ");
-    Serial.print(screen->current);
-    Serial.print(" Rotate ");
+void config_rotate(screen_t *screen, int16_t val) {
+    if (val < CONFIG_CALIB) {
+        val = CONFIG_CALIB;
+    }
+    if (val > CONFIG_DEFAULTS) {
+        val = CONFIG_DEFAULTS;
+    }
+    screen->config_mode = (config_mode_t)val;
+    Serial.print("CONFIG selection = ");
     Serial.println(val);
+}
+
+void config_short_press(screen_t *screen) {
+    switch (screen->config_mode) {
+        case CONFIG_CALIB:
+            screen_set(screen, SCREEN_CALIB);
+            break;
+
+        case CONFIG_TUNE:
+            screen_set(screen, SCREEN_TUNE);
+            break;
+
+        case CONFIG_SAVE:
+            Serial.println("CONFIG: Save selected");
+            break;
+
+        case CONFIG_CANCEL:
+            screen_set(screen, SCREEN_MAIN);
+            break;
+
+        case CONFIG_DEFAULTS:
+            Serial.println("CONFIG: DEFAULTS selected");
+            break;
+    }
+}
+
+void screen_rotate(screen_t *screen, int16_t val) {
+    switch (screen->current) {
+        case SCREEN_MAIN:
+            if (screen->main_mode == MAIN_MODE_TEMP) {
+                Serial.print("MAIN TEMP = ");
+            } else {
+                Serial.print("MAIN FAN = ");
+            }
+            Serial.println(val);
+            break;
+
+        case SCREEN_CONFIG:
+            config_rotate(screen, val);
+            break;
+
+        default:
+            break;
+    }
 }
 
 void screen_short_press(screen_t *screen) {
     switch (screen->current) {
         case SCREEN_MAIN:
-            Serial.println("MAIN: short press");
+            if (screen->main_mode == MAIN_MODE_TEMP) {
+                screen->main_mode = MAIN_MODE_FAN;
+                Serial.println("MAIN: TEMP -> FAN");
+            } else {
+                screen->main_mode = MAIN_MODE_TEMP;
+                Serial.println("MAIN: FAN -> TEMP");
+            }
             break;
 
         case SCREEN_CONFIG:
-            Serial.println("CONFIG: short press");
+            config_short_press(screen);
             break;
 
         default:
@@ -320,6 +392,7 @@ void screen_long_press(screen_t *screen) {
     switch (screen->current) {
         case SCREEN_MAIN:
             screen_set(screen, SCREEN_CONFIG);
+            Serial.println("MAIN -> CONFIG");
             break;
 
         default:
