@@ -134,10 +134,20 @@ typedef enum {
     CONFIG_DEFAULTS
 } config_mode_t;
 
+typedef enum {
+    CALIB_TEMP_MIN,
+    CALIB_TEMP_MID,
+    CALIB_TEMP_MAX
+} calib_point_t;
+
 typedef struct {
     screen_id_t current;
     main_mode_t main_mode;
     config_mode_t config_mode;
+    calib_point_t calib_point;
+    bool calib_tune;
+    bool tune_on;
+    uint8_t tune_power;
 } screen_t;
 
 encoder_t encoder;
@@ -301,6 +311,10 @@ void screen_init(screen_t *screen) {
     screen->current = SCREEN_MAIN;
     screen->main_mode = MAIN_MODE_TEMP;
     screen->config_mode = CONFIG_CALIB;
+    screen->calib_point = CALIB_TEMP_MIN;
+    screen->calib_tune = false;
+    screen->tune_on = false;
+    screen->tune_power = MAX_FIXED_POWER >> 2;
 }
 
 void screen_set(screen_t *screen, screen_id_t next) {
@@ -327,10 +341,12 @@ void config_short_press(screen_t *screen) {
     switch (screen->config_mode) {
         case CONFIG_CALIB:
             screen_set(screen, SCREEN_CALIB);
+            Serial.println("CONFIG -> CALIB");
             break;
 
         case CONFIG_TUNE:
             screen_set(screen, SCREEN_TUNE);
+            Serial.println("CONFIG -> TUNE");
             break;
 
         case CONFIG_SAVE:
@@ -339,12 +355,46 @@ void config_short_press(screen_t *screen) {
 
         case CONFIG_CANCEL:
             screen_set(screen, SCREEN_MAIN);
+            Serial.println("CONFIG -> MAIN");
             break;
 
         case CONFIG_DEFAULTS:
             Serial.println("CONFIG: DEFAULTS selected");
             break;
     }
+}
+
+void tune_rotate(screen_t *screen, int32_t val) {
+    if (screen->current != SCREEN_TUNE) {
+        return;
+    }
+    if (val < 0) {
+        val = 0;
+    }
+    if (val > MAX_FIXED_POWER) {
+        val = MAX_FIXED_POWER;
+    }
+    screen->tune_power = val;
+    Serial.print("TUNE PWR = ");
+    Serial.println(val);
+}
+
+void tune_short_press(screen_t *screen) {
+    if (screen->tune_on) {
+        screen->tune_on = false;
+        Serial.println("TUNE: OFF");
+    } else {
+        screen->tune_on = true;
+        Serial.print("TUNE: ON, power = ");
+        Serial.println(screen->tune_power);
+    }
+}
+
+void tune_long_press(screen_t *screen) {
+    screen->tune_on = false;
+    Serial.print("TUNE: OFF");
+    Serial.println("TUNE -> MAIN");
+    screen_set(screen, SCREEN_MAIN);
 }
 
 void screen_rotate(screen_t *screen, int16_t val) {
@@ -360,6 +410,10 @@ void screen_rotate(screen_t *screen, int16_t val) {
 
         case SCREEN_CONFIG:
             config_rotate(screen, val);
+            break;
+
+        case SCREEN_TUNE:
+            tune_rotate(screen, val);
             break;
 
         default:
@@ -383,6 +437,9 @@ void screen_short_press(screen_t *screen) {
             config_short_press(screen);
             break;
 
+        case SCREEN_TUNE:
+            tune_short_press(screen);
+
         default:
             break;
     }
@@ -393,6 +450,10 @@ void screen_long_press(screen_t *screen) {
         case SCREEN_MAIN:
             screen_set(screen, SCREEN_CONFIG);
             Serial.println("MAIN -> CONFIG");
+            break;
+
+        case SCREEN_TUNE:
+            tune_long_press(screen);
             break;
 
         default:
