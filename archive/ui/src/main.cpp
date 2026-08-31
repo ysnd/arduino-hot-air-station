@@ -1,4 +1,3 @@
-#include "HardwareSerial.h"
 #include <Arduino.h>
 
 #define ENC_A 3 
@@ -11,6 +10,10 @@
 #define BTN_TICK_TIME 200
 #define BTN_OVER_PRESS 3000
 #define MAX_FIXED_POWER 70
+#define TEMP_MIN 150
+#define TEMP_MAX 500
+#define FAN_MIN 0
+#define FAN_MAX 254
 
 typedef struct {
     int32_t min_pos;
@@ -76,6 +79,7 @@ typedef struct {
     uint8_t fan_set;
     bool tune_on;
     uint8_t tune_power;
+    int16_t encoder_last_pos;
 } ui_t;
 
 encoder_t encoder;
@@ -115,7 +119,7 @@ bool encoder_write(encoder_t *enc, int16_t pos) {
     return false;
 }
 
-void encoder_reset(encoder_t *enc, int16_t init_pos, int16_t min_pos, int16_t max_pos, uint8_t inc, uint8_t fast_inc, bool looped) {
+void encoder_config(encoder_t *enc, int16_t init_pos, int16_t min_pos, int16_t max_pos, uint8_t inc, uint8_t fast_inc, bool looped) {
     enc->min_pos = min_pos;
     enc->max_pos = max_pos;
     if (!encoder_write(enc, init_pos)) {
@@ -233,6 +237,30 @@ bool button_tick(button_t *btn) {
 }
 
 //UI 
+void ui_sync_encoder(ui_t *ui) {
+    switch (ui->current) {
+        case UI_MAIN:
+            if (ui->main_mode == MAIN_MODE_TEMP) {
+                encoder_config(&encoder, ui->temp_set, TEMP_MIN, TEMP_MAX, 1, 1, false);
+            } else {
+                encoder_config(&encoder, ui->fan_set, FAN_MIN, FAN_MAX, 5, 5, false);
+            }
+            break;
+
+        case UI_CONFIG:
+            encoder_config(&encoder, ui->config_mode, CONFIG_CALIB, CONFIG_DEFAULTS, 1, 1, false);
+            break;
+
+        case UI_TUNE:
+            encoder_config(&encoder, ui->tune_power, 0, MAX_FIXED_POWER, 1, 1, false);
+            break;
+
+        default:
+            break;
+    }
+    ui->encoder_last_pos = encoder_read(&encoder);
+}
+
 void ui_init(ui_t *ui) {
     ui->current = UI_MAIN;
     ui->main_mode = MAIN_MODE_TEMP;
@@ -241,11 +269,14 @@ void ui_init(ui_t *ui) {
     ui->temp_set = 300;
     ui->fan_set = 50;
     ui->tune_on = false;
-    ui->tune_power = MAIN_MODE_TEMP >> 2;
+    ui->tune_power = MAX_FIXED_POWER >> 2;
+    ui->encoder_last_pos = 0;
+    ui_sync_encoder(ui);
 }
 
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
+    ui_sync_encoder(ui);
 }
 
 ui_page_t ui_get_screen(ui_t *ui) {
@@ -256,22 +287,22 @@ ui_page_t ui_get_screen(ui_t *ui) {
 void main_rotate(ui_t *ui, int16_t delta) {
     if (ui->main_mode == MAIN_MODE_TEMP) {
         int16_t temp = ui->temp_set + delta;
-        if (temp < 150) {
-            temp = 150;
+        if (temp < TEMP_MIN) {
+            temp = TEMP_MIN;
         } 
-        if (temp > 500) {
-            temp = 500;
+        if (temp > TEMP_MAX) {
+            temp = TEMP_MAX;
         }
         ui->temp_set = temp;
         Serial.print("MAIN TEMP delta = ");
         Serial.println(ui->temp_set);
     } else {
-        int8_t fan = ui->fan_set + delta;
-        if (fan < 0) {
-            fan = 0;
+        int16_t fan = ui->fan_set + delta;
+        if (fan < FAN_MIN) {
+            fan = FAN_MIN;
         } 
-        if (fan > 100) {
-            fan = 100;
+        if (fan > FAN_MAX) {
+            fan = FAN_MAX;
         }
         ui->fan_set = fan;
         Serial.print("MAIN FAN delta = ");
@@ -326,6 +357,17 @@ void ui_rotate(ui_t *ui, int16_t delta) {
 }
 
 //Short Press
+void main_short_press(ui_t *ui) {
+    if (ui->main_mode == MAIN_MODE_TEMP) {
+        ui->main_mode = MAIN_MODE_FAN;
+        Serial.println("MAIN: TEMP -> FAN");
+    } else {
+        ui->main_mode = MAIN_MODE_TEMP;
+        Serial.println("MAIN: FAN -> TEMP");
+    }
+    ui_sync_encoder(ui);
+}
+
 void config_short_press(ui_t *ui) {
     switch (ui->config_mode) {
         case CONFIG_CALIB:
@@ -367,13 +409,7 @@ void tune_short_press(ui_t *ui) {
 void ui_short_press(ui_t *ui) {
     switch (ui->current) {
         case UI_MAIN:
-            if (ui->main_mode == MAIN_MODE_TEMP) {
-                ui->main_mode = MAIN_MODE_FAN;
-                Serial.println("MAIN: TEMP -> FAN");
-            } else {
-                ui->main_mode = MAIN_MODE_TEMP;
-                Serial.println("MAIN: FAN -> TEMP");
-            }
+            main_short_press(ui);
             break;
 
         case UI_CONFIG:
@@ -424,19 +460,13 @@ void setup() {
 }
 
 void loop() {
-    static int16_t old_pos = 0;
     int16_t pos = encoder_read(&encoder);
-    static uint8_t ui_pos = 0;
-    if (pos != old_pos) {
+    
+    if (pos != ui.encoder_last_pos) {
         //Serial.println(pos);
-        int16_t delta = pos - old_pos;
-        old_pos = pos;
+        int16_t delta = pos - ui.encoder_last_pos;
+        ui.encoder_last_pos = pos;
         ui_rotate(&ui, delta);
-    }
-    if (ui_get_screen(&ui) != ui_pos) {
-        Serial.print("Current screen ");
-        Serial.println(ui_get_screen(&ui));
-        ui_pos = ui_get_screen(&ui);
     }   
     button_evt_t evt = button_check(&enc_button);
 
