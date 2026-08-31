@@ -4,13 +4,13 @@
 #define ENC_A 3 
 #define ENC_B 5 
 #define ENC_SW 4 
-#define MAX_FIXED_POWER 70
 #define ENC_FAST_TIMEOUT 300
 #define ENC_OVER_PRESS 1000
 #define BTN_LONG_TIME 900
 #define BTN_DEBOUNCE 50
 #define BTN_TICK_TIME 200
 #define BTN_OVER_PRESS 3000
+#define MAX_FIXED_POWER 70
 
 typedef struct {
     int32_t min_pos;
@@ -40,13 +40,13 @@ typedef struct {
 } button_t;
 
 typedef enum {
-    SCREEN_MAIN,
-    SCREEN_CONFIG,
-    SCREEN_CALIB,
-    SCREEN_TUNE,
-    SCREEN_WORK,
-    SCREEN_ERROR
-} screen_id_t;
+    UI_MAIN,
+    UI_CONFIG,
+    UI_CALIB,
+    UI_TUNE,
+    UI_WORK,
+    UI_ERROR
+} ui_page_t;
 
 typedef enum {
     MAIN_MODE_TEMP,
@@ -68,11 +68,12 @@ typedef enum {
 } calib_point_t;
 
 typedef struct {
-    screen_id_t current;
+    ui_page_t current;
     main_mode_t main_mode;
     config_mode_t config_mode;
     calib_point_t calib_point;
-    bool calib_tune;
+    uint16_t temp_set;
+    uint8_t fan_set;
     bool tune_on;
     uint8_t tune_power;
 } ui_t;
@@ -233,24 +234,53 @@ bool button_tick(button_t *btn) {
 
 //UI 
 void ui_init(ui_t *ui) {
-    ui->current = SCREEN_MAIN;
+    ui->current = UI_MAIN;
     ui->main_mode = MAIN_MODE_TEMP;
     ui->config_mode = CONFIG_CALIB;
     ui->calib_point = CALIB_TEMP_MIN;
-    ui->calib_tune = false;
+    ui->temp_set = 300;
+    ui->fan_set = 50;
     ui->tune_on = false;
-    ui->tune_power = MAX_FIXED_POWER >> 2;
+    ui->tune_power = MAIN_MODE_TEMP >> 2;
 }
 
-void ui_set_screen(ui_t *ui, screen_id_t next) {
+void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
 }
 
-screen_id_t ui_get_screen(ui_t *ui) {
+ui_page_t ui_get_screen(ui_t *ui) {
     return ui->current;
 }
 
-void config_rotate(ui_t *ui, int16_t val) {
+//Rotate
+void main_rotate(ui_t *ui, int16_t delta) {
+    if (ui->main_mode == MAIN_MODE_TEMP) {
+        int16_t temp = ui->temp_set + delta;
+        if (temp < 150) {
+            temp = 150;
+        } 
+        if (temp > 500) {
+            temp = 500;
+        }
+        ui->temp_set = temp;
+        Serial.print("MAIN TEMP delta = ");
+        Serial.println(ui->temp_set);
+    } else {
+        int8_t fan = ui->fan_set + delta;
+        if (fan < 0) {
+            fan = 0;
+        } 
+        if (fan > 100) {
+            fan = 100;
+        }
+        ui->fan_set = fan;
+        Serial.print("MAIN FAN delta = ");
+        Serial.println(ui->fan_set);
+    }
+}
+
+void config_rotate(ui_t *ui, int16_t delta) {
+    int16_t val = (int16_t)ui->config_mode + delta;
     if (val < CONFIG_CALIB) {
         val = CONFIG_CALIB;
     }
@@ -262,15 +292,49 @@ void config_rotate(ui_t *ui, int16_t val) {
     Serial.println(val);
 }
 
+void tune_rotate(ui_t *ui, int32_t delta) {
+    int16_t pwr = ui->tune_power + delta;
+    if (pwr < 0) {
+        pwr = 0;
+    }
+    if (pwr > MAX_FIXED_POWER) {
+        pwr = MAX_FIXED_POWER;
+    }
+
+    ui->tune_power = pwr;
+    Serial.print("TUNE PWR = ");
+    Serial.println(ui->tune_power);
+}
+
+void ui_rotate(ui_t *ui, int16_t delta) {
+    switch (ui->current) {
+        case UI_MAIN:
+            main_rotate(ui, delta)  ;
+            break;
+
+        case UI_CONFIG:
+            config_rotate(ui, delta);
+            break;
+
+        case UI_TUNE:
+            tune_rotate(ui, delta);
+            break;
+
+        default:
+            break;
+    }
+}
+
+//Short Press
 void config_short_press(ui_t *ui) {
     switch (ui->config_mode) {
         case CONFIG_CALIB:
-           ui_set_screen(ui, SCREEN_CALIB);
+            ui_set_screen(ui, UI_CALIB);
             Serial.println("CONFIG -> CALIB");
             break;
 
         case CONFIG_TUNE:
-            ui_set_screen(ui, SCREEN_TUNE);
+            ui_set_screen(ui, UI_TUNE);
             Serial.println("CONFIG -> TUNE");
             break;
 
@@ -279,7 +343,7 @@ void config_short_press(ui_t *ui) {
             break;
 
         case CONFIG_CANCEL:
-            ui_set_screen(ui, SCREEN_MAIN);
+            ui_set_screen(ui, UI_MAIN);
             Serial.println("CONFIG -> MAIN");
             break;
 
@@ -287,21 +351,6 @@ void config_short_press(ui_t *ui) {
             Serial.println("CONFIG: DEFAULTS selected");
             break;
     }
-}
-
-void tune_rotate(ui_t *ui, int32_t val) {
-    if (ui->current != SCREEN_TUNE) {
-        return;
-    }
-    if (val < 0) {
-        val = 0;
-    }
-    if (val > MAX_FIXED_POWER) {
-        val = MAX_FIXED_POWER;
-    }
-    ui->tune_power = val;
-    Serial.print("TUNE PWR = ");
-    Serial.println(val);
 }
 
 void tune_short_press(ui_t *ui) {
@@ -315,40 +364,9 @@ void tune_short_press(ui_t *ui) {
     }
 }
 
-void tune_long_press(ui_t *ui) {
-    ui->tune_on = false;
-    Serial.print("TUNE: OFF");
-    Serial.println("TUNE -> MAIN");
-    ui_set_screen(ui, SCREEN_MAIN);
-}
-
-void ui_rotate(ui_t *ui, int16_t val) {
-    switch (ui->current) {
-        case SCREEN_MAIN:
-            if (ui->main_mode == MAIN_MODE_TEMP) {
-                Serial.print("MAIN TEMP = ");
-            } else {
-                Serial.print("MAIN FAN = ");
-            }
-            Serial.println(val);
-            break;
-
-        case SCREEN_CONFIG:
-            config_rotate(ui, val);
-            break;
-
-        case SCREEN_TUNE:
-            tune_rotate(ui, val);
-            break;
-
-        default:
-            break;
-    }
-}
-
 void ui_short_press(ui_t *ui) {
     switch (ui->current) {
-        case SCREEN_MAIN:
+        case UI_MAIN:
             if (ui->main_mode == MAIN_MODE_TEMP) {
                 ui->main_mode = MAIN_MODE_FAN;
                 Serial.println("MAIN: TEMP -> FAN");
@@ -358,11 +376,11 @@ void ui_short_press(ui_t *ui) {
             }
             break;
 
-        case SCREEN_CONFIG:
+        case UI_CONFIG:
             config_short_press(ui);
             break;
 
-        case SCREEN_TUNE:
+        case UI_TUNE:
             tune_short_press(ui);
             break;
 
@@ -371,14 +389,22 @@ void ui_short_press(ui_t *ui) {
     }
 }
 
+//Long Press
+void tune_long_press(ui_t *ui) {
+    ui->tune_on = false;
+    Serial.print("TUNE: OFF");
+    Serial.println("TUNE -> MAIN");
+    ui_set_screen(ui, UI_MAIN);
+}
+
 void ui_long_press(ui_t *ui) {
     switch (ui->current) {
-        case SCREEN_MAIN:
-            ui_set_screen(ui, SCREEN_CONFIG);
+        case UI_MAIN:
+            ui_set_screen(ui, UI_CONFIG);
             Serial.println("MAIN -> CONFIG");
             break;
 
-        case SCREEN_TUNE:
+        case UI_TUNE:
             tune_long_press(ui);
             break;
 
@@ -403,8 +429,9 @@ void loop() {
     static uint8_t ui_pos = 0;
     if (pos != old_pos) {
         //Serial.println(pos);
+        int16_t delta = pos - old_pos;
         old_pos = pos;
-        ui_rotate(&ui, pos);
+        ui_rotate(&ui, delta);
     }
     if (ui_get_screen(&ui) != ui_pos) {
         Serial.print("Current screen ");
