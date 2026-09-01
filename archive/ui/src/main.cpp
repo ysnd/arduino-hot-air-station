@@ -2,7 +2,8 @@
 
 #define ENC_A 3 
 #define ENC_B 5 
-#define ENC_SW 4 
+#define ENC_SW 4
+#define REED_PIN 8
 #define ENC_FAST_TIMEOUT 300
 #define ENC_OVER_PRESS 1000
 #define BTN_LONG_TIME 900
@@ -14,6 +15,12 @@
 #define TEMP_MAX 500
 #define FAN_MIN 0
 #define FAN_MAX 254
+
+typedef struct { 
+    uint8_t pin;
+    bool state;
+    bool last_state;
+} reed_t;
 
 typedef struct {
     int32_t min_pos;
@@ -89,6 +96,7 @@ typedef struct {
     int16_t encoder_last_pos;
 } ui_t;
 
+reed_t reed;
 encoder_t encoder;
 button_t enc_button;
 ui_t ui;
@@ -291,6 +299,16 @@ void ui_init(ui_t *ui) {
     ui_sync_encoder(ui);
 }
 
+//Main Init
+void main_init(ui_t *ui) {
+    //gun disable heating opration
+    //TODO: gun_switch_power(&gun, false);
+    ui_sync_encoder(ui);
+    Serial.println("MAIN: INIT");
+    //TODO Display
+    //clear display dan redraw main screen 
+}
+
 //Work Init 
 void work_init(ui_t *ui) {
     ui->work_mode = WORK_MODE_FAN;
@@ -306,10 +324,19 @@ void work_init(ui_t *ui) {
 
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
-    if (next == UI_WORK) {
-        work_init(ui);
-    } else {
-        ui_sync_encoder(ui);
+
+    switch (next) {
+        case UI_MAIN:
+            main_init(ui);
+            break;
+
+        case UI_WORK:
+            work_init(ui);
+            break;
+
+        default:
+            ui_sync_encoder(ui);
+            break;
     }
 }
 
@@ -532,8 +559,43 @@ void ui_long_press(ui_t *ui) {
     }
 }
 
+//Reed
+void reed_init(reed_t *reed, uint8_t pin) {
+    reed->pin = pin;
+    reed->state = false;
+    reed->last_state = false;
+    pinMode(reed->pin, INPUT_PULLUP);
+}
+
+bool reed_read(reed_t *reed) {
+    reed->state = !digitalRead(reed->pin);
+    return reed->state;
+}
+
+void ui_reed_event(ui_t *ui, bool on) {
+    switch (ui->current) {
+        case UI_MAIN:
+            if (!on) {
+                Serial.println("REED: MAIN -> WORK");
+                ui_set_screen(ui, UI_WORK);
+            }
+            break;
+
+        case UI_WORK:
+            if (on) {
+                Serial.println("REED: WORK -> MAIN");
+                ui_set_screen(ui, UI_MAIN);
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
 void setup() {
     Serial.begin(115200);
+    reed_init(&reed, REED_PIN);
     encoder_init(&encoder, ENC_A, ENC_B, 0);
     button_init(&enc_button, ENC_SW);
     ui_init(&ui);
@@ -550,7 +612,12 @@ void loop() {
         int16_t delta = pos - ui.encoder_last_pos;
         ui.encoder_last_pos = pos;
         ui_rotate(&ui, delta);
-    }   
+    }  
+    bool reed_state = reed_read(&reed);
+    if (reed_state != reed.last_state) {
+        reed.last_state = reed_state;
+        ui_reed_event(&ui, reed_state);
+    }
     button_evt_t evt = button_check(&enc_button);
 
     switch (evt) {
