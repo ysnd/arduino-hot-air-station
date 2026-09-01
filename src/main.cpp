@@ -547,6 +547,14 @@ uint8_t gun_avg_power_percent(gun_t *gun) {
     return percent;
 }
 
+void gun_set_temp(gun_t *gun, uint16_t temp_c) {
+    gun->temp_set = temp_to_adc(temp_c);
+}
+
+void gun_set_fan(gun_t *gun, uint8_t fan) {
+    gun->fan_speed = fan;
+}
+
 void keep_temp(gun_t *gun, pid_t *pid) {
     uint16_t temp_adc = emp_read(&gun->sensor);
     history_put(&gun->temp_history, temp_adc);
@@ -758,6 +766,19 @@ bool button_tick(button_t *btn) {
     return false;
 }
 
+//Reed
+void reed_init(reed_t *reed, uint8_t pin) {
+    reed->pin = pin;
+    reed->state = false;
+    reed->last_state = false;
+    pinMode(reed->pin, INPUT_PULLUP);
+}
+
+bool reed_read(reed_t *reed) {
+    reed->state = !digitalRead(reed->pin);
+    return reed->state;
+}
+
 //UI 
 void ui_sync_encoder(ui_t *ui) {
     switch (ui->current) {
@@ -808,8 +829,6 @@ void ui_init(ui_t *ui) {
 
 //Main Init
 void main_init(ui_t *ui) {
-    //gun disable heating opration
-    //TODO: gun_switch_power(&gun, false);
     ui_sync_encoder(ui);
     Serial.println("MAIN: INIT");
     //TODO Display
@@ -820,8 +839,6 @@ void main_init(ui_t *ui) {
 void work_init(ui_t *ui) {
     ui->work_mode = WORK_MODE_FAN;
     ui->work_ready = false;
-    //TODO: gun 
-    //aktifkan sistem hot air gun
     ui_sync_encoder(ui);
     Serial.println("WORK: INIT");
     Serial.println("WORK: FAN MODE");
@@ -888,8 +905,7 @@ void work_rotate(ui_t *ui, int16_t delta) {
             temp = TEMP_MAX;
         }
         ui->temp_set = temp;
-        //TODO:gun
-        //konversi hum temp->internal temp
+        gun_set_temp(&gun, ui->temp_set);
         Serial.print("WORK TEMP = ");
         Serial.println(ui->temp_set);
     } else {
@@ -901,8 +917,7 @@ void work_rotate(ui_t *ui, int16_t delta) {
             fan = FAN_MAX;
         }
         ui->fan_set = fan;
-        //TODO: gun
-        //->gun fan control
+        gun_set_fan(&gun, ui->fan_set);
         Serial.print("WORK FAN = ");
         Serial.println(ui->fan_set);
     }
@@ -1065,24 +1080,13 @@ void ui_long_press(ui_t *ui) {
             break;
     }
 }
-//Reed
-void reed_init(reed_t *reed, uint8_t pin) {
-    reed->pin = pin;
-    reed->state = false;
-    reed->last_state = false;
-    pinMode(reed->pin, INPUT_PULLUP);
-}
-
-bool reed_read(reed_t *reed) {
-    reed->state = !digitalRead(reed->pin);
-    return reed->state;
-}
 
 void ui_reed_event(ui_t *ui, bool on) {
     switch (ui->current) {
         case UI_MAIN:
             if (!on) {
                 Serial.println("REED: MAIN -> WORK");
+                gun_switch_power(&gun, true);
                 ui_set_screen(ui, UI_WORK);
             }
             break;
@@ -1090,6 +1094,7 @@ void ui_reed_event(ui_t *ui, bool on) {
         case UI_WORK:
             if (on) {
                 Serial.println("REED: WORK -> MAIN");
+                gun_switch_power(&gun, false);
                 ui_set_screen(ui, UI_MAIN);
             }
             break;
