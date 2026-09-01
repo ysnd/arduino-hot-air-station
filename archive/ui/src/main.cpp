@@ -57,6 +57,11 @@ typedef enum {
 } main_mode_t;
 
 typedef enum {
+    WORK_MODE_TEMP,
+    WORK_MODE_FAN
+} work_mode_t;
+
+typedef enum {
     CONFIG_CALIB,
     CONFIG_TUNE,
     CONFIG_SAVE,
@@ -73,12 +78,14 @@ typedef enum {
 typedef struct {
     ui_page_t current;
     main_mode_t main_mode;
+    work_mode_t work_mode;
     config_mode_t config_mode;
     calib_point_t calib_point;
     uint16_t temp_set;
     uint8_t fan_set;
     bool tune_on;
     uint8_t tune_power;
+    bool work_ready;
     int16_t encoder_last_pos;
 } ui_t;
 
@@ -255,6 +262,14 @@ void ui_sync_encoder(ui_t *ui) {
             encoder_config(&encoder, ui->tune_power, 0, MAX_FIXED_POWER, 1, 1, false);
             break;
 
+        case  UI_WORK:
+            if (ui->work_mode == WORK_MODE_TEMP) {
+                encoder_config(&encoder, ui->temp_set, TEMP_MIN, TEMP_MAX, 1, 1, false);
+            } else {
+                encoder_config(&encoder, ui->fan_set, FAN_MIN, FAN_MAX, 5, 5, false);
+            }
+            break;
+
         default:
             break;
     }
@@ -264,19 +279,38 @@ void ui_sync_encoder(ui_t *ui) {
 void ui_init(ui_t *ui) {
     ui->current = UI_MAIN;
     ui->main_mode = MAIN_MODE_TEMP;
+    ui->work_mode = WORK_MODE_FAN;
     ui->config_mode = CONFIG_CALIB;
     ui->calib_point = CALIB_TEMP_MIN;
     ui->temp_set = 300;
     ui->fan_set = 50;
     ui->tune_on = false;
     ui->tune_power = MAX_FIXED_POWER >> 2;
+    ui->work_ready = false;
     ui->encoder_last_pos = 0;
     ui_sync_encoder(ui);
 }
 
+//Work Init 
+void work_init(ui_t *ui) {
+    ui->work_mode = WORK_MODE_FAN;
+    ui->work_ready = false;
+    //TODO: gun 
+    //aktifkan sistem hot air gun
+    ui_sync_encoder(ui);
+    Serial.println("WORK: INIT");
+    Serial.println("WORK: FAN MODE");
+    //TODO:Display
+    //clear display dan redraw work screen
+}
+
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
-    ui_sync_encoder(ui);
+    if (next == UI_WORK) {
+        work_init(ui);
+    } else {
+        ui_sync_encoder(ui);
+    }
 }
 
 ui_page_t ui_get_screen(ui_t *ui) {
@@ -306,6 +340,36 @@ void main_rotate(ui_t *ui, int16_t delta) {
         }
         ui->fan_set = fan;
         Serial.print("MAIN FAN delta = ");
+        Serial.println(ui->fan_set);
+    }
+}
+
+void work_rotate(ui_t *ui, int16_t delta) {
+    if (ui->work_mode == WORK_MODE_TEMP) {
+        int16_t temp = ui->temp_set + delta;
+        if (temp < TEMP_MIN) {
+            temp = TEMP_MIN;
+        } 
+        if (temp > TEMP_MAX) {
+            temp = TEMP_MAX;
+        }
+        ui->temp_set = temp;
+        //TODO:gun
+        //konversi hum temp->internal temp
+        Serial.print("WORK TEMP = ");
+        Serial.println(ui->temp_set);
+    } else {
+        int16_t fan = ui->fan_set + delta;
+        if (fan < FAN_MIN) {
+            fan = FAN_MIN;
+        } 
+        if (fan > FAN_MAX) {
+            fan = FAN_MAX;
+        }
+        ui->fan_set = fan;
+        //TODO: gun
+        //->gun fan control
+        Serial.print("WORK FAN = ");
         Serial.println(ui->fan_set);
     }
 }
@@ -351,6 +415,10 @@ void ui_rotate(ui_t *ui, int16_t delta) {
             tune_rotate(ui, delta);
             break;
 
+        case UI_WORK:
+            work_rotate(ui, delta);
+            break;
+
         default:
             break;
     }
@@ -364,6 +432,17 @@ void main_short_press(ui_t *ui) {
     } else {
         ui->main_mode = MAIN_MODE_TEMP;
         Serial.println("MAIN: FAN -> TEMP");
+    }
+    ui_sync_encoder(ui);
+}
+
+void work_short_press(ui_t *ui) {
+    if (ui->work_mode == WORK_MODE_TEMP) {
+        ui->work_mode = WORK_MODE_FAN;
+        Serial.println("WORK: TEMP -> FAN");
+    } else {
+        ui->work_mode = WORK_MODE_TEMP;
+        Serial.println("WORK: FAN -> TEMP");
     }
     ui_sync_encoder(ui);
 }
@@ -418,6 +497,10 @@ void ui_short_press(ui_t *ui) {
 
         case UI_TUNE:
             tune_short_press(ui);
+            break;
+
+        case UI_WORK:
+            work_short_press(ui);
             break;
 
         default:
