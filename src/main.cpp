@@ -1,4 +1,3 @@
-#include "HardwareSerial.h"
 #include <Arduino.h>
 
 #define ZC_PIN 2
@@ -13,7 +12,7 @@
 #define HISTORY_SIZE 16
 #define MAX_POWER 70
 #define MAX_FIXED_POWER 70
-#define MAX_COOL_FAN 255
+#define MAX_FAN_SPEED 255
 #define MIN_FAN_SPEED 99
 #define TEMP_GUN_COLD 90
 #define INT_TEMP_MAX 900
@@ -26,8 +25,6 @@
 #define BTN_OVER_PRESS 3000
 #define TEMP_MIN 150
 #define TEMP_MAX 500
-#define FAN_MIN 0
-#define FAN_MAX 254
 
 const uint16_t adc_ambient = 9;
 const uint16_t adc_200 = 587;
@@ -600,7 +597,7 @@ void keep_temp(gun_t *gun, pid_t *pid) {
                     if (gun_is_cold(gun)) {
                         gun_shutdown(gun);
                     } else {
-                        fan_set(gun, MAX_COOL_FAN);
+                        fan_set(gun, MAX_FAN_SPEED);
                     }
                 } else {
                     gun_shutdown(gun);
@@ -787,7 +784,7 @@ void ui_sync_encoder(ui_t *ui) {
             if (ui->main_mode == MAIN_MODE_TEMP) {
                 encoder_config(&encoder, ui->temp_set, TEMP_MIN, TEMP_MAX, 1, 1, false);
             } else {
-                encoder_config(&encoder, ui->fan_set, FAN_MIN, FAN_MAX, 5, 5, false);
+                encoder_config(&encoder, ui->fan_set, MIN_FAN_SPEED, MAX_FAN_SPEED, 5, 5, false);
             }
             break;
 
@@ -803,7 +800,7 @@ void ui_sync_encoder(ui_t *ui) {
             if (ui->work_mode == WORK_MODE_TEMP) {
                 encoder_config(&encoder, ui->temp_set, TEMP_MIN, TEMP_MAX, 1, 1, false);
             } else {
-                encoder_config(&encoder, ui->fan_set, FAN_MIN, FAN_MAX, 5, 5, false);
+                encoder_config(&encoder, ui->fan_set, MIN_FAN_SPEED, MAX_FAN_SPEED, 5, 5, false);
             }
             break;
 
@@ -820,7 +817,7 @@ void ui_init(ui_t *ui) {
     ui->config_mode = CONFIG_CALIB;
     ui->calib_point = CALIB_TEMP_MIN;
     ui->temp_set = 300;
-    ui->fan_set = 50;
+    ui->fan_set = MIN_FAN_SPEED;
     ui->tune_on = false;
     ui->tune_power = MAX_FIXED_POWER >> 2;
     ui->work_ready = false;
@@ -840,6 +837,8 @@ void main_init(ui_t *ui) {
 void work_init(ui_t *ui) {
     ui->work_mode = WORK_MODE_FAN;
     ui->work_ready = false;
+    gun_set_temp(&gun, ui->temp_set);
+    gun_set_fan(&gun, ui->fan_set);
     ui_sync_encoder(ui);
     Serial.println("WORK: INIT");
     Serial.println("WORK: FAN MODE");
@@ -873,24 +872,12 @@ ui_page_t ui_get_screen(ui_t *ui) {
 void main_rotate(ui_t *ui, int16_t delta) {
     if (ui->main_mode == MAIN_MODE_TEMP) {
         int16_t temp = ui->temp_set + delta;
-        if (temp < TEMP_MIN) {
-            temp = TEMP_MIN;
-        } 
-        if (temp > TEMP_MAX) {
-            temp = TEMP_MAX;
-        }
-        ui->temp_set = temp;
+        ui->temp_set = clamp(temp, TEMP_MIN, TEMP_MAX);
         Serial.print("MAIN TEMP delta = ");
         Serial.println(ui->temp_set);
     } else {
         int16_t fan = ui->fan_set + delta;
-        if (fan < FAN_MIN) {
-            fan = FAN_MIN;
-        } 
-        if (fan > FAN_MAX) {
-            fan = FAN_MAX;
-        }
-        ui->fan_set = fan;
+        ui->fan_set = clamp(fan, MIN_FAN_SPEED, MAX_FAN_SPEED);
         Serial.print("MAIN FAN delta = ");
         Serial.println(ui->fan_set);
     }
@@ -899,25 +886,13 @@ void main_rotate(ui_t *ui, int16_t delta) {
 void work_rotate(ui_t *ui, int16_t delta) {
     if (ui->work_mode == WORK_MODE_TEMP) {
         int16_t temp = ui->temp_set + delta;
-        if (temp < TEMP_MIN) {
-            temp = TEMP_MIN;
-        } 
-        if (temp > TEMP_MAX) {
-            temp = TEMP_MAX;
-        }
-        ui->temp_set = temp;
+        ui->temp_set = clamp(temp, MIN_FAN_SPEED, MAX_FAN_SPEED);
         gun_set_temp(&gun, ui->temp_set);
         Serial.print("WORK TEMP = ");
         Serial.println(ui->temp_set);
     } else {
         int16_t fan = ui->fan_set + delta;
-        if (fan < FAN_MIN) {
-            fan = FAN_MIN;
-        } 
-        if (fan > FAN_MAX) {
-            fan = FAN_MAX;
-        }
-        ui->fan_set = fan;
+        ui->fan_set = clamp(fan, MIN_FAN_SPEED, MAX_FAN_SPEED);
         gun_set_fan(&gun, ui->fan_set);
         Serial.print("WORK FAN = ");
         Serial.println(ui->fan_set);
