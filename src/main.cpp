@@ -1,3 +1,4 @@
+#include "HardwareSerial.h"
 #include <Arduino.h>
 
 #define ZC_PIN 2
@@ -1104,6 +1105,38 @@ void ui_reed_event(ui_t *ui, bool on) {
     }
 }
 
+void debug_gun(void) {
+    static uint32_t last = 0;
+    if (millis() - last < 500) {
+        return;
+    }
+
+    Serial.print("UI=");
+    Serial.print(ui.current);
+
+    Serial.print(" TEMP SET=");
+    Serial.print(ui.temp_set);
+
+    Serial.print(" FAN SET=");
+    Serial.print(ui.fan_set);
+
+    Serial.print(" | GUN_MODE=");
+    Serial.print(gun.mode);
+
+    Serial.print(" GUN_TEMP_SET=");
+    Serial.print(gun.temp_set);
+
+    Serial.print(" FAN=");
+    Serial.print(gun.actual_fan);
+
+    Serial.print(" POWER=");
+    Serial.print(gun.actual_power);
+
+    Serial.print(" DOCKED=");
+    Serial.println(reed.state);
+
+}
+
 void setup() {
     Serial.begin(115200);
     pinMode(ZC_PIN, INPUT_PULLUP);
@@ -1172,5 +1205,6 @@ void loop() {
     if (button_tick(&enc_button)) {
         Serial.println("TICK");
     }
+    debug_gun();
 }
 
