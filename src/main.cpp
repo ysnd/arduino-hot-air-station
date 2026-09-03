@@ -4,6 +4,7 @@
 #define TRIAC_PIN 7
 #define REED_PIN 8
 #define FAN_PIN 9
+#define BUZZER_PIN 6
 #define ENC_A 3 
 #define ENC_B 5 
 #define ENC_SW 4 
@@ -614,6 +615,43 @@ void keep_temp(gun_t *gun, pid_t *pid) {
     history_put(&gun->power_history, gun->actual_power);
 }
 
+//BUZZER 
+void buzzer_short_beep(void) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(80);
+    digitalWrite(BUZZER_PIN, LOW);
+}
+
+void buzzer_low_beep(void) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(100);
+    digitalWrite(BUZZER_PIN, LOW);
+}
+
+void buzzer_double_beep(void) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(160);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(150);
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(160);
+    digitalWrite(BUZZER_PIN, LOW);
+}
+
+void buzzer_failed_beep(void) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(170);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(10);
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(80);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(100);
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(80);
+    digitalWrite(BUZZER_PIN, LOW);
+}
+
 //Encoder
 void encoder_init(encoder_t *enc, uint8_t a_pin, uint8_t b_pin, int16_t init_pos) {
     enc->a_low_start_time = 0;
@@ -1128,7 +1166,9 @@ void setup() {
     Serial.begin(115200);
     pinMode(ZC_PIN, INPUT_PULLUP);
     pinMode(TRIAC_PIN, OUTPUT);
+    pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(TRIAC_PIN, LOW);
+    digitalWrite(BUZZER_PIN, LOW);
     reed_init(&reed, REED_PIN);
     encoder_init(&encoder, ENC_A, ENC_B, 0);
     button_init(&enc_button, ENC_SW);
