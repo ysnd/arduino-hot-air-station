@@ -185,7 +185,7 @@ int32_t clamp(int32_t val, int32_t min, int32_t max) {
 }
 
 int16_t interpolate(int16_t x, int16_t in_min, int16_t in_max, int16_t out_min, int16_t out_max) {
-    return out_min + ((x - in_min) * (out_max - out_min)) / (in_max - in_min);
+    return out_min + ((int32_t)(x - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
 
 void emp_init(emp_avg_t *emp, uint8_t length) {
@@ -1108,8 +1108,20 @@ void debug_gun(void) {
     Serial.print(gun.actual_power);
 
     Serial.print(" DOCKED=");
-    Serial.println(reed.state);
+    Serial.print(reed.state);
 
+    uint16_t raw = analogRead(THERMOCOUPLE_PIN);
+    emp_update(&gun.sensor, raw);
+
+    uint16_t filtered = emp_read(&gun.sensor);
+    uint16_t temp = adc_to_temp(filtered);
+
+    Serial.print(" | RAW=");
+    Serial.print(raw);
+    Serial.print(" FILTER=");
+    Serial.print(filtered);
+    Serial.print(" TEMP=");
+    Serial.println(temp);
 }
 
 void setup() {
