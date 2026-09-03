@@ -374,7 +374,7 @@ void fan_init(void) {
     TCCR1B = _BV(WGM13);
     ICR1 = 256;
     TCCR1A |= _BV(COM1A1);
-    TCCR1B |= _BV(CS10);
+    TCCR1B = _BV(WGM13) | _BV(CS12) | _BV(CS10);
     OCR1A = 0;
     interrupts();
 }
