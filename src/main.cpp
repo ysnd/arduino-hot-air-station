@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <LCD_I2C.h>
 
 #define ZC_PIN 2
 #define TRIAC_PIN 7
@@ -36,6 +37,8 @@ const uint16_t temp_200 = 200;
 const uint16_t temp_300 = 300;
 const uint16_t temp_400 = 400;
 const byte PID_DENOMINATOR = 11;
+
+LCD_I2C lcd(0x27, 16, 2);
 
 typedef enum {
     POWER_OFF,
@@ -166,12 +169,21 @@ typedef struct {
     uint8_t tune_power;
     bool work_ready;
     int16_t encoder_last_pos;
+    bool used;
+    bool cool_notified;
+    uint32_t clear_used_ms;
 } ui_t;
+
+typedef struct {
+    bool full_second_line;
+    char temp_units;
+} display_t;
 
 reed_t reed;
 encoder_t encoder;
 button_t enc_button;
 ui_t ui;
+display_t display;
 gun_t gun;
 pid_t pid;
 
@@ -624,7 +636,7 @@ void buzzer_short_beep(void) {
 
 void buzzer_low_beep(void) {
     digitalWrite(BUZZER_PIN, HIGH);
-    delay(100);
+    delay(160);
     digitalWrite(BUZZER_PIN, LOW);
 }
 
@@ -865,6 +877,11 @@ void ui_init(ui_t *ui) {
 
 //Main Init
 void main_init(ui_t *ui) {
+    ui->main_mode = MAIN_MODE_TEMP;
+    ui->used = !gun_is_cold(&gun);
+    ui->cool_notified = !ui->used;
+    ui->clear_used_ms = 0;
+
     ui_sync_encoder(ui);
     Serial.println("MAIN: INIT");
     //TODO Display
@@ -924,7 +941,7 @@ void main_rotate(ui_t *ui, int16_t delta) {
 void work_rotate(ui_t *ui, int16_t delta) {
     if (ui->work_mode == WORK_MODE_TEMP) {
         int16_t temp = ui->temp_set + delta;
-        ui->temp_set = clamp(temp, MIN_FAN_SPEED, MAX_FAN_SPEED);
+        ui->temp_set = clamp(temp, TEMP_MIN, TEMP_MAX);
         gun_set_temp(&gun, ui->temp_set);
         Serial.print("WORK TEMP = ");
         Serial.println(ui->temp_set);
@@ -939,27 +956,14 @@ void work_rotate(ui_t *ui, int16_t delta) {
 
 void config_rotate(ui_t *ui, int16_t delta) {
     int16_t val = (int16_t)ui->config_mode + delta;
-    if (val < CONFIG_CALIB) {
-        val = CONFIG_CALIB;
-    }
-    if (val > CONFIG_DEFAULTS) {
-        val = CONFIG_DEFAULTS;
-    }
-    ui->config_mode = (config_mode_t)val;
+    ui->config_mode = (config_mode_t)clamp(val, CONFIG_CALIB, CONFIG_DEFAULTS);
     Serial.print("CONFIG selection = ");
     Serial.println(val);
 }
 
 void tune_rotate(ui_t *ui, int32_t delta) {
     int16_t pwr = ui->tune_power + delta;
-    if (pwr < 0) {
-        pwr = 0;
-    }
-    if (pwr > MAX_FIXED_POWER) {
-        pwr = MAX_FIXED_POWER;
-    }
-
-    ui->tune_power = pwr;
+    ui->tune_power = clamp(pwr, 0, MAX_FIXED_POWER);
     Serial.print("TUNE PWR = ");
     Serial.println(ui->tune_power);
 }
@@ -1149,8 +1153,6 @@ void debug_gun(void) {
     Serial.print(reed.state);
 
     uint16_t raw = analogRead(THERMOCOUPLE_PIN);
-    emp_update(&gun.sensor, raw);
-
     uint16_t filtered = emp_read(&gun.sensor);
     uint16_t temp = adc_to_temp(filtered);
 
@@ -1176,6 +1178,10 @@ void setup() {
     gun_init(&gun);
     pid_init(&pid);
     fan_init();
+    lcd.begin();
+    lcd.backlight();
+    lcd.clear();
+    lcd.print("tes");
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zc_isr, RISING);
     attachInterrupt(digitalPinToInterrupt(ENC_A), encoder_irq, CHANGE);
 }
