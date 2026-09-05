@@ -1124,10 +1124,10 @@ void config_rotate(ui_t *ui, int16_t delta) {
     int16_t val = (int16_t)ui->config_mode + delta;
     ui->config_mode = (config_mode_t)clamp(val, CONFIG_CALIB, CONFIG_DEFAULTS);
     Serial.print("CONFIG selection = ");
-    Serial.println(val);
+    Serial.println(ui->config_mode);
 }
 
-void tune_rotate(ui_t *ui, int32_t delta) {
+void tune_rotate(ui_t *ui, int16_t delta) {
     int16_t pwr = ui->tune_power + delta;
     ui->tune_power = clamp(pwr, 0, MAX_FIXED_POWER);
     Serial.print("TUNE PWR = ");
