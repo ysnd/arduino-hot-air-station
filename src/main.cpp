@@ -1288,6 +1288,45 @@ void ui_reed_event(ui_t *ui, bool on) {
     }
 }
 
+void main_show(ui_t *ui) {
+    static uint32_t last_update = 0;
+    uint32_t now = millis();
+
+    if (now - last_update < 500) {
+        return;
+    }
+    last_update = now;
+
+    uint16_t temp_adc = history_avg(&gun.temp_history);
+    uint16_t temp_curr = adc_to_temp(temp_adc);
+    uint8_t fan_cur = gun.actual_fan;
+    uint8_t power = gun_avg_power_percent(&gun);
+
+    display_t_set(ui->temp_set);
+    display_t_curr(temp_curr);
+
+    display_fan(ui->fan_set);
+    display_fan_curr(fan_cur);
+    display_power(power, false);
+
+    if (gun_is_cold(&gun)) {
+        if (ui->used) {
+            display_msg_cold();
+            if (!ui->cool_notified) {
+                buzzer_low_beep();
+                ui->cool_notified = true;
+                ui->clear_used_ms = now + 120000UL;
+            }
+        } else {
+            display_msg_off();
+        }
+    }
+    if (ui->clear_used_ms != 0 && (int32_t)(now - ui->clear_used_ms) >=0) {
+        ui->used = false;
+        ui->clear_used_ms = 0;
+    }
+}
+
 void debug_gun(void) {
     static uint32_t last = 0;
     if (millis() - last < 500) {
@@ -1401,6 +1440,9 @@ void loop() {
     if (button_tick(&enc_button)) {
         Serial.println("TICK");
     }
+    if (ui.current == UI_MAIN) {
+    main_show(&ui);
+}
     debug_gun();
 }
 
