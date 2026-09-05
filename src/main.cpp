@@ -187,6 +187,69 @@ display_t display;
 gun_t gun;
 pid_t pid;
 
+static const uint8_t custom_symbols[6][8] = {
+    {
+        0b00110,
+        0b01001,
+        0b01001,
+        0b00110,
+        0b00000,
+        0b00000,
+        0b00000,
+        0b00000
+    },
+    {
+        0b00000,
+        0b11001,
+        0b01011,
+        0b00100,
+        0b11010,
+        0b10011,
+        0b00000,
+        0b00000
+    },
+    {
+        0b00011,
+        0b00110,
+        0b01100,
+        0b11111,
+        0b00110,
+        0b01100,
+        0b01000,
+        0b10000
+    },
+    {
+        0b00100,
+        0b01010,
+        0b01010,
+        0b01010,
+        0b10001,
+        0b10001,
+        0b01110,
+        0b00000
+    },
+    {
+        0b01110,
+        0b01010,
+        0b01010,
+        0b01010,
+        0b11011,
+        0b01110,
+        0b00100,
+        0b00000
+    },
+    {
+        0b10111,
+        0b10101,
+        0b10101,
+        0b10101,
+        0b10101,
+        0b10101,
+        0b11101,
+        0b00000
+    }
+};
+
 int32_t clamp(int32_t val, int32_t min, int32_t max) {
     if (val < min) {
         return min;
@@ -199,6 +262,78 @@ int32_t clamp(int32_t val, int32_t min, int32_t max) {
 
 int16_t interpolate(int16_t x, int16_t in_min, int16_t in_max, int16_t out_min, int16_t out_max) {
     return out_min + ((int32_t)(x - in_min) * (out_max - out_min)) / (in_max - in_min);
+}
+
+void display_init(void) {
+    lcd.begin();
+    lcd.backlight();
+    lcd.clear();
+    for (uint8_t i = 0; i < 6; i++) {
+        lcd.createChar(i + 1, (uint8_t *)custom_symbols[i]);
+    }
+}
+
+void display_t_set(uint16_t t) {
+    char buff[10];
+    lcd.setCursor(0, 0);
+    snprintf(buff, sizeof(buff), "%c%3u%cC", 4, t, 1);
+    lcd.print(buff);
+}
+
+void display_t_curr(uint16_t t) {
+    char buff[10];
+
+    lcd.setCursor(0, 1);
+    if (t < 1000) {
+        snprintf(buff, sizeof(buff), "%c%3u%cC ", 5, t, 1);
+        lcd.print(buff);
+    } else {
+        lcd.print("xxx");
+    }
+}
+
+void display_fan(uint8_t s) {
+    s = interpolate(s, 0, 255, 0, 99);
+    lcd.setCursor(6, 0);
+    lcd.print(" ");
+    lcd.write(6);
+    if (s < 10) {
+        lcd.print(s);
+    } 
+    lcd.print(s);
+    lcd.print("%");
+}
+
+void display_fan_curr(uint8_t s) {
+    s = interpolate(s, 0, 255, 0, 99);
+    lcd.setCursor(6, 1);
+    lcd.print(" ");
+    lcd.write(2);
+
+    if (s < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(s);
+    lcd.print("%");
+}
+
+void display_power(uint8_t p, bool show_zero) {
+    if (p > 99) {
+        p = 99;
+    }
+    lcd.setCursor(11, 1);
+    if ((p == 0) && !show_zero) {
+        lcd.print("     ");
+        return;
+    }
+    lcd.print(" ");
+    lcd.write(3);
+
+    if (p < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(p);
+    lcd.print("%");
 }
 
 void emp_init(emp_avg_t *emp, uint8_t length) {
@@ -1178,10 +1313,7 @@ void setup() {
     gun_init(&gun);
     pid_init(&pid);
     fan_init();
-    lcd.begin();
-    lcd.backlight();
-    lcd.clear();
-    lcd.print("tes");
+    display_init();
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zc_isr, RISING);
     attachInterrupt(digitalPinToInterrupt(ENC_A), encoder_irq, CHANGE);
 }
