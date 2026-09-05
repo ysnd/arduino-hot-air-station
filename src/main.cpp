@@ -264,78 +264,6 @@ int16_t interpolate(int16_t x, int16_t in_min, int16_t in_max, int16_t out_min, 
     return out_min + ((int32_t)(x - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
 
-void display_init(void) {
-    lcd.begin();
-    lcd.backlight();
-    lcd.clear();
-    for (uint8_t i = 0; i < 6; i++) {
-        lcd.createChar(i + 1, (uint8_t *)custom_symbols[i]);
-    }
-}
-
-void display_t_set(uint16_t t) {
-    char buff[10];
-    lcd.setCursor(0, 0);
-    snprintf(buff, sizeof(buff), "%c%3u%cC", 4, t, 1);
-    lcd.print(buff);
-}
-
-void display_t_curr(uint16_t t) {
-    char buff[10];
-
-    lcd.setCursor(0, 1);
-    if (t < 1000) {
-        snprintf(buff, sizeof(buff), "%c%3u%cC ", 5, t, 1);
-        lcd.print(buff);
-    } else {
-        lcd.print("xxx");
-    }
-}
-
-void display_fan(uint8_t s) {
-    s = interpolate(s, 0, 255, 0, 99);
-    lcd.setCursor(6, 0);
-    lcd.print(" ");
-    lcd.write(6);
-    if (s < 10) {
-        lcd.print(s);
-    } 
-    lcd.print(s);
-    lcd.print("%");
-}
-
-void display_fan_curr(uint8_t s) {
-    s = interpolate(s, 0, 255, 0, 99);
-    lcd.setCursor(6, 1);
-    lcd.print(" ");
-    lcd.write(2);
-
-    if (s < 10) {
-        lcd.print(" ");
-    }
-    lcd.print(s);
-    lcd.print("%");
-}
-
-void display_power(uint8_t p, bool show_zero) {
-    if (p > 99) {
-        p = 99;
-    }
-    lcd.setCursor(11, 1);
-    if ((p == 0) && !show_zero) {
-        lcd.print("     ");
-        return;
-    }
-    lcd.print(" ");
-    lcd.write(3);
-
-    if (p < 10) {
-        lcd.print(" ");
-    }
-    lcd.print(p);
-    lcd.print("%");
-}
-
 void emp_init(emp_avg_t *emp, uint8_t length) {
     emp->k = length;
     emp->data = 0;
@@ -797,6 +725,109 @@ void buzzer_failed_beep(void) {
     digitalWrite(BUZZER_PIN, HIGH);
     delay(80);
     digitalWrite(BUZZER_PIN, LOW);
+}
+
+//Display 
+void display_init(void) {
+    lcd.begin();
+    lcd.backlight();
+    lcd.clear();
+    for (uint8_t i = 0; i < 6; i++) {
+        lcd.createChar(i + 1, (uint8_t *)custom_symbols[i]);
+    }
+}
+
+void display_t_set(uint16_t t) {
+    char buff[10];
+    lcd.setCursor(0, 0);
+    snprintf(buff, sizeof(buff), "%c%3u%cC", 4, t, 1);
+    lcd.print(buff);
+}
+
+void display_t_curr(uint16_t t) {
+    char buff[10];
+
+    lcd.setCursor(0, 1);
+    if (t < 1000) {
+        snprintf(buff, sizeof(buff), "%c%3u%cC ", 5, t, 1);
+        lcd.print(buff);
+    } else {
+        lcd.print("xxx");
+    }
+}
+
+void display_fan(uint8_t s) {
+    s = interpolate(s, 0, 255, 0, 99);
+    lcd.setCursor(6, 0);
+    lcd.print(" ");
+    lcd.write(6);
+    if (s < 10) {
+        lcd.print(s);
+    } 
+    lcd.print(s);
+    lcd.print("%");
+}
+
+void display_fan_curr(uint8_t s) {
+    s = interpolate(s, 0, 255, 0, 99);
+    lcd.setCursor(6, 1);
+    lcd.print(" ");
+    lcd.write(2);
+
+    if (s < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(s);
+    lcd.print("%");
+}
+
+void display_power(uint8_t p, bool show_zero) {
+    if (p > 99) {
+        p = 99;
+    }
+    lcd.setCursor(11, 1);
+    if ((p == 0) && !show_zero) {
+        lcd.print("     ");
+        return;
+    }
+    lcd.print(" ");
+    lcd.write(3);
+
+    if (p < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(p);
+    lcd.print("%");
+}
+
+void display_msg_on(void) {
+    lcd.setCursor(11, 0);
+    lcd.print("   ON");
+}
+
+void display_msg_off(void) {
+    lcd.setCursor(11, 0);
+    lcd.print("  OFF");
+}
+
+void display_msg_ready(void) {
+    lcd.setCursor(11, 0);
+    lcd.print("READY");
+}
+
+void display_msg_cold(void) {
+    lcd.setCursor(11, 0);
+    lcd.print(" COLD");
+}
+
+void display_msg_fail(void) {
+    lcd.setCursor(0, 1);
+    lcd.print("     FAILED     ");
+}
+
+void display_msg_tune(void) {
+    lcd.setCursor(0, 0);
+    lcd.print("TUNE");
 }
 
 //Encoder
