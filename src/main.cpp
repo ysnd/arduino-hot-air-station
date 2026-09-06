@@ -1,4 +1,3 @@
-#include "HardwareSerial.h"
 #include <Arduino.h>
 #include <LCD_I2C.h>
 
@@ -1386,6 +1385,84 @@ void main_show(ui_t *ui) {
     }
 }
 
+void work_show(ui_t *ui) {
+    static uint32_t last_update = 0;
+    static uint32_t ready_hold_until = 0;
+    static uint16_t last_temp_set;
+    static uint16_t last_temp_curr;
+    static uint8_t last_fan_set;
+    static uint8_t last_fan_curr;
+    static uint8_t last_power;
+
+    uint32_t now = millis();
+
+    bool periodic = (now - last_update >= 500);
+    
+    if (!ui->display_dirty && !periodic) {
+        return;
+    }
+
+    if ((int32_t)(now - ready_hold_until) < 0) {
+        return;
+    }
+
+    last_update = now;
+
+    uint16_t temp_curr = adc_to_temp(history_avg(&gun.temp_history));
+    uint8_t fan_curr = gun.actual_fan;
+    uint8_t power = gun_avg_power_percent(&gun);
+
+    if (ui->display_dirty) {
+        display_t_set(ui->temp_set);
+        display_t_curr(temp_curr);
+        display_fan(ui->fan_set);
+        display_fan_curr(fan_curr);
+        display_power(power, false);
+        
+        if (ui->work_ready) {
+            display_msg_ready();
+        } else {
+            display_msg_on();
+        }
+        last_temp_set = ui->temp_set;
+        last_temp_curr = temp_curr;
+        last_fan_set = ui->fan_set;
+        last_fan_curr = fan_curr;
+        last_power = power;
+
+        ui->display_dirty = false;
+    } else {
+        if (ui->temp_set != last_temp_set) {
+            display_t_set(ui->temp_set);
+            last_temp_set = ui->temp_set;
+        }
+        if (temp_curr != last_temp_curr) {
+            display_t_curr(temp_curr);
+            last_temp_curr = temp_curr;
+        }
+        if (ui->fan_set != last_fan_set) {
+            display_fan(ui->fan_set);
+            last_fan_set = ui->fan_set;
+        }
+        if (fan_curr != last_fan_curr) {
+            display_fan_curr(fan_curr);
+            last_fan_curr = fan_curr;
+        }
+        if (power != last_power) {
+            display_power(power, false);
+            last_power = power;
+        }
+    }
+    if ((abs((int16_t)ui->temp_set - (int16_t)temp_curr) < 5) && (history_dispersion(&gun.temp_history) <= 60)) {
+        if (!ui->work_ready) {
+            buzzer_short_beep();
+            ui->work_ready = true;
+            display_msg_ready();
+            ready_hold_until = now + (500UL << 2);
+        }
+    }
+}
+
 void debug_gun(void) {
     static uint32_t last = 0;
     if (millis() - last < 500) {
@@ -1499,9 +1576,18 @@ void loop() {
     if (button_tick(&enc_button)) {
         Serial.println("TICK");
     }
-    if (ui.current == UI_MAIN) {
-    main_show(&ui);
-}
+    switch (ui.current) {
+        case UI_MAIN:
+            main_show(&ui);
+            break;
+
+        case UI_WORK:
+            work_show(&ui);
+            break;
+
+        default:
+            break;
+    }
     //debug_gun();
 }
 
