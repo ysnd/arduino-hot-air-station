@@ -1,3 +1,4 @@
+#include "HardwareSerial.h"
 #include <Arduino.h>
 #include <LCD_I2C.h>
 
@@ -172,6 +173,7 @@ typedef struct {
     bool used;
     bool cool_notified;
     uint32_t clear_used_ms;
+    bool display_dirty;
 } ui_t;
 
 typedef struct {
@@ -1047,11 +1049,10 @@ void main_init(ui_t *ui) {
     ui->used = !gun_is_cold(&gun);
     ui->cool_notified = !ui->used;
     ui->clear_used_ms = 0;
-
+    ui->display_dirty = true;
     ui_sync_encoder(ui);
     Serial.println("MAIN: INIT");
-    //TODO Display
-    //clear display dan redraw main screen 
+    lcd.clear();
 }
 
 //Work Init 
@@ -1063,8 +1064,7 @@ void work_init(ui_t *ui) {
     ui_sync_encoder(ui);
     Serial.println("WORK: INIT");
     Serial.println("WORK: FAN MODE");
-    //TODO:Display
-    //clear display dan redraw work screen
+    lcd.clear();
 }
 
 void ui_set_screen(ui_t *ui, ui_page_t next) {
@@ -1094,11 +1094,13 @@ void main_rotate(ui_t *ui, int16_t delta) {
     if (ui->main_mode == MAIN_MODE_TEMP) {
         int16_t temp = ui->temp_set + delta;
         ui->temp_set = clamp(temp, TEMP_MIN, TEMP_MAX);
+        ui->display_dirty = true;
         Serial.print("MAIN TEMP delta = ");
         Serial.println(ui->temp_set);
     } else {
         int16_t fan = ui->fan_set + delta;
         ui->fan_set = clamp(fan, MIN_FAN_SPEED, MAX_FAN_SPEED);
+        ui->display_dirty = true;
         Serial.print("MAIN FAN delta = ");
         Serial.println(ui->fan_set);
     }
@@ -1108,12 +1110,14 @@ void work_rotate(ui_t *ui, int16_t delta) {
     if (ui->work_mode == WORK_MODE_TEMP) {
         int16_t temp = ui->temp_set + delta;
         ui->temp_set = clamp(temp, TEMP_MIN, TEMP_MAX);
+        ui->display_dirty = true;
         gun_set_temp(&gun, ui->temp_set);
         Serial.print("WORK TEMP = ");
         Serial.println(ui->temp_set);
     } else {
         int16_t fan = ui->fan_set + delta;
         ui->fan_set = clamp(fan, MIN_FAN_SPEED, MAX_FAN_SPEED);
+        ui->display_dirty = true;
         gun_set_fan(&gun, ui->fan_set);
         Serial.print("WORK FAN = ");
         Serial.println(ui->fan_set);
@@ -1166,6 +1170,7 @@ void main_short_press(ui_t *ui) {
         ui->main_mode = MAIN_MODE_TEMP;
         Serial.println("MAIN: FAN -> TEMP");
     }
+    ui->display_dirty = true;
     ui_sync_encoder(ui);
 }
 
@@ -1177,6 +1182,7 @@ void work_short_press(ui_t *ui) {
         ui->work_mode = WORK_MODE_TEMP;
         Serial.println("WORK: FAN -> TEMP");
     }
+    ui->display_dirty = true;
     ui_sync_encoder(ui);
 }
 
@@ -1219,6 +1225,7 @@ void tune_short_press(ui_t *ui) {
 }
 
 void ui_short_press(ui_t *ui) {
+    Serial.println("UI SHORTPRESS");
     switch (ui->current) {
         case UI_MAIN:
             main_short_press(ui);
@@ -1290,40 +1297,92 @@ void ui_reed_event(ui_t *ui, bool on) {
 
 void main_show(ui_t *ui) {
     static uint32_t last_update = 0;
+    static uint16_t last_temp_set;
+    static uint16_t last_temp_curr;
+    static uint8_t last_fan_set;
+    static uint8_t last_fan_curr;
+    static uint8_t last_power;
+    static bool last_cold;
+    static bool last_used;
+
     uint32_t now = millis();
 
-    if (now - last_update < 500) {
+    bool periodic = (now - last_update >= 500);
+    
+    if (!ui->display_dirty && !periodic) {
         return;
     }
+
     last_update = now;
 
-    uint16_t temp_adc = history_avg(&gun.temp_history);
-    uint16_t temp_curr = adc_to_temp(temp_adc);
-    uint8_t fan_cur = gun.actual_fan;
+    uint16_t temp_curr = adc_to_temp(history_avg(&gun.temp_history));
+    uint8_t fan_curr = gun.actual_fan;
     uint8_t power = gun_avg_power_percent(&gun);
+    bool cold = gun_is_cold(&gun);
 
-    display_t_set(ui->temp_set);
-    display_t_curr(temp_curr);
-
-    display_fan(ui->fan_set);
-    display_fan_curr(fan_cur);
-    display_power(power, false);
-
-    if (gun_is_cold(&gun)) {
-        if (ui->used) {
+    if (ui->display_dirty) {
+        display_t_set(ui->temp_set);
+        display_t_curr(temp_curr);
+        display_fan(ui->fan_set);
+        display_fan_curr(fan_curr);
+        display_power(power, false);
+        
+        if (cold && ui->used) {
             display_msg_cold();
-            if (!ui->cool_notified) {
-                buzzer_low_beep();
-                ui->cool_notified = true;
-                ui->clear_used_ms = now + 120000UL;
-            }
         } else {
             display_msg_off();
         }
+        last_temp_set = ui->temp_set;
+        last_temp_curr = temp_curr;
+        last_fan_set = ui->fan_set;
+        last_fan_curr = fan_curr;
+        last_power = power;
+        last_cold = cold;
+        last_used = ui->used;
+
+        ui->display_dirty = false;
+    } else {
+        if (ui->temp_set != last_temp_set) {
+            display_t_set(ui->temp_set);
+            last_temp_set = ui->temp_set;
+        }
+        if (temp_curr != last_temp_curr) {
+            display_t_curr(temp_curr);
+            last_temp_curr = temp_curr;
+        }
+        if (ui->fan_set != last_fan_set) {
+            display_fan(ui->fan_set);
+            last_fan_set = ui->fan_set;
+        }
+        if (fan_curr != last_fan_curr) {
+            display_fan_curr(fan_curr);
+            last_fan_curr = fan_curr;
+        }
+        if (power != last_power) {
+            display_power(power, false);
+            last_power = power;
+        }
+        if (cold != last_cold || ui->used != last_used) {
+            if (cold && ui->used) {
+                display_msg_cold();
+            } else {
+                display_msg_off();
+            }
+            last_cold = cold;
+            last_used = ui->used;
+        }
+    }
+
+    if (cold && ui->used && !ui->cool_notified) {
+        buzzer_low_beep();
+        ui->cool_notified = true;            
+        ui->clear_used_ms = now + 120000UL;
     }
     if (ui->clear_used_ms != 0 && (int32_t)(now - ui->clear_used_ms) >=0) {
         ui->used = false;
         ui->clear_used_ms = 0;
+        display_msg_off();
+        last_used = false;
     }
 }
 
@@ -1443,6 +1502,6 @@ void loop() {
     if (ui.current == UI_MAIN) {
     main_show(&ui);
 }
-    debug_gun();
+    //debug_gun();
 }
 
