@@ -1240,7 +1240,8 @@ void config_short_press(ui_t *ui) {
             Serial.println("CONFIG -> TUNE");
             break;
 
-        case CONFIG_SAVE:
+        case CONFIG_SAVE: 
+            ui_set_screen(ui, UI_MAIN);
             Serial.println("CONFIG: Save selected");
             break;
 
@@ -1251,6 +1252,12 @@ void config_short_press(ui_t *ui) {
 
         case CONFIG_DEFAULTS:
             Serial.println("CONFIG: DEFAULTS selected");
+            //TODO:
+            //config_set_defaults(true);
+            ui_set_screen(ui, UI_MAIN);
+            break;
+
+        default:
             break;
     }
 }
