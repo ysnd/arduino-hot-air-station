@@ -831,6 +831,32 @@ void display_msg_tune(void) {
     lcd.print("TUNE");
 }
 
+void display_setup_mode(uint8_t mode) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("SETUP");
+    lcd.setCursor(1, 1);
+    switch (mode) {
+        case 0:
+            lcd.print("CALIBRATE");
+            break;
+        case 1:
+            lcd.print("TUNE");
+            break;
+        case 2:
+            lcd.print("SAVE");
+            break;
+        case 3:
+            lcd.print("CANCEL");
+            break;
+        case 4:
+            lcd.print("RESET CONFIG");
+            break;
+        default:
+            break;
+    }
+}
+
 //Encoder
 void encoder_init(encoder_t *enc, uint8_t a_pin, uint8_t b_pin, int16_t init_pos) {
     enc->a_low_start_time = 0;
@@ -1006,7 +1032,7 @@ void ui_sync_encoder(ui_t *ui) {
             break;
 
         case UI_CONFIG:
-            encoder_config(&encoder, ui->config_mode, CONFIG_CALIB, CONFIG_DEFAULTS, 1, 1, false);
+            encoder_config(&encoder, ui->config_mode, CONFIG_CALIB, CONFIG_DEFAULTS, 1, 1, true);
             break;
 
         case UI_TUNE:
@@ -1042,7 +1068,7 @@ void ui_init(ui_t *ui) {
     ui_sync_encoder(ui);
 }
 
-//Main Init
+//state Init
 void main_init(ui_t *ui) {
     ui->main_mode = MAIN_MODE_TEMP;
     ui->used = !gun_is_cold(&gun);
@@ -1054,7 +1080,6 @@ void main_init(ui_t *ui) {
     lcd.clear();
 }
 
-//Work Init 
 void work_init(ui_t *ui) {
     ui->work_mode = WORK_MODE_FAN;
     ui->work_ready = false;
@@ -1067,6 +1092,15 @@ void work_init(ui_t *ui) {
     lcd.clear();
 }
 
+void config_init(ui_t *ui) {
+    ui->config_mode = CONFIG_CALIB;
+    ui->display_dirty = true;
+    ui_sync_encoder(ui);
+    Serial.print("CONFIG: INIT");
+    display_setup_mode(ui->config_mode);
+}
+
+
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
 
@@ -1077,6 +1111,10 @@ void ui_set_screen(ui_t *ui, ui_page_t next) {
 
         case UI_WORK:
             work_init(ui);
+            break;
+
+        case UI_CONFIG:
+            config_init(ui);
             break;
 
         default:
@@ -1127,6 +1165,7 @@ void work_rotate(ui_t *ui, int16_t delta) {
 void config_rotate(ui_t *ui, int16_t delta) {
     int16_t val = (int16_t)ui->config_mode + delta;
     ui->config_mode = (config_mode_t)clamp(val, CONFIG_CALIB, CONFIG_DEFAULTS);
+    ui->display_dirty = true;
     Serial.print("CONFIG selection = ");
     Serial.println(ui->config_mode);
 }
@@ -1295,6 +1334,7 @@ void ui_reed_event(ui_t *ui, bool on) {
     }
 }
 
+//show
 void main_show(ui_t *ui) {
     static uint32_t last_update = 0;
     static uint16_t last_temp_set;
@@ -1473,6 +1513,14 @@ void work_show(ui_t *ui) {
     }
 }
 
+void config_show(ui_t *ui) {
+    if (!ui->display_dirty) {
+        return;
+    }
+    display_setup_mode(ui->config_mode);
+    ui->display_dirty = false;
+}
+
 void debug_gun(void) {
     static uint32_t last = 0;
     if (millis() - last < 500) {
@@ -1594,6 +1642,9 @@ void loop() {
         case UI_WORK:
             work_show(&ui);
             break;
+
+        case UI_CONFIG:
+            config_show(&ui);
 
         default:
             break;
