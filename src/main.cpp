@@ -1061,6 +1061,7 @@ void work_init(ui_t *ui) {
     gun_set_temp(&gun, ui->temp_set);
     gun_set_fan(&gun, ui->fan_set);
     ui_sync_encoder(ui);
+    ui->display_dirty = true;
     Serial.println("WORK: INIT");
     Serial.println("WORK: FAN MODE");
     lcd.clear();
@@ -1393,6 +1394,7 @@ void work_show(ui_t *ui) {
     static uint8_t last_fan_set;
     static uint8_t last_fan_curr;
     static uint8_t last_power;
+    static bool last_ready_showing;
 
     uint32_t now = millis();
 
@@ -1402,15 +1404,13 @@ void work_show(ui_t *ui) {
         return;
     }
 
-    if ((int32_t)(now - ready_hold_until) < 0) {
-        return;
-    }
-
     last_update = now;
 
     uint16_t temp_curr = adc_to_temp(history_avg(&gun.temp_history));
     uint8_t fan_curr = gun.actual_fan;
-    uint8_t power = gun_avg_power_percent(&gun);
+    uint8_t power = gun.actual_power;
+
+    bool ready_showing = ui->work_ready && (int32_t)(now - ready_hold_until) < 0;
 
     if (ui->display_dirty) {
         display_t_set(ui->temp_set);
@@ -1419,7 +1419,7 @@ void work_show(ui_t *ui) {
         display_fan_curr(fan_curr);
         display_power(power, false);
         
-        if (ui->work_ready) {
+        if (ready_showing) {
             display_msg_ready();
         } else {
             display_msg_on();
@@ -1429,6 +1429,7 @@ void work_show(ui_t *ui) {
         last_fan_set = ui->fan_set;
         last_fan_curr = fan_curr;
         last_power = power;
+        last_ready_showing = ready_showing;
 
         ui->display_dirty = false;
     } else {
@@ -1452,13 +1453,22 @@ void work_show(ui_t *ui) {
             display_power(power, false);
             last_power = power;
         }
+        if (ready_showing != last_ready_showing) {
+            if (ready_showing) {
+                display_msg_ready();
+            } else {
+                display_msg_on();
+            }
+            last_ready_showing = ready_showing;
+        }
     }
     if ((abs((int16_t)ui->temp_set - (int16_t)temp_curr) < 5) && (history_dispersion(&gun.temp_history) <= 60)) {
         if (!ui->work_ready) {
             buzzer_short_beep();
             ui->work_ready = true;
-            display_msg_ready();
             ready_hold_until = now + (500UL << 2);
+            display_msg_ready();
+            last_ready_showing = true;
         }
     }
 }
