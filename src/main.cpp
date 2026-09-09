@@ -1065,6 +1065,10 @@ void ui_init(ui_t *ui) {
     ui->tune_power = MAX_FIXED_POWER >> 2;
     ui->work_ready = false;
     ui->encoder_last_pos = 0;
+    ui->used = false;
+    ui->cool_notified = false;
+    ui->clear_used_ms = 0;
+    ui->display_dirty = true;
     ui_sync_encoder(ui);
 }
 
@@ -1097,9 +1101,7 @@ void config_init(ui_t *ui) {
     ui->display_dirty = true;
     ui_sync_encoder(ui);
     Serial.print("CONFIG: INIT");
-    display_setup_mode(ui->config_mode);
 }
-
 
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
@@ -1173,6 +1175,7 @@ void config_rotate(ui_t *ui, int16_t delta) {
 void tune_rotate(ui_t *ui, int16_t delta) {
     int16_t pwr = ui->tune_power + delta;
     ui->tune_power = clamp(pwr, 0, MAX_FIXED_POWER);
+    ui->display_dirty = true;
     Serial.print("TUNE PWR = ");
     Serial.println(ui->tune_power);
 }
@@ -1570,11 +1573,11 @@ void setup() {
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(TRIAC_PIN, LOW);
     digitalWrite(BUZZER_PIN, LOW);
-    reed_init(&reed, REED_PIN);
+    gun_init(&gun);
     encoder_init(&encoder, ENC_A, ENC_B, 0);
     button_init(&enc_button, ENC_SW);
+    reed_init(&reed, REED_PIN);
     ui_init(&ui);
-    gun_init(&gun);
     pid_init(&pid);
     fan_init();
     display_init();
@@ -1645,6 +1648,7 @@ void loop() {
 
         case UI_CONFIG:
             config_show(&ui);
+            break;
 
         default:
             break;
