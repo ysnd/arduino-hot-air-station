@@ -29,9 +29,6 @@
 #define TEMP_MAX 500
 
 const uint16_t adc_ambient = 9;
-const uint16_t adc_200 = 587;
-const uint16_t adc_300 = 751;
-const uint16_t adc_400 = 850;
 const uint16_t temp_ambient = 25;
 const uint16_t temp_200 = 200;
 const uint16_t temp_300 = 300;
@@ -182,6 +179,10 @@ button_t enc_button;
 ui_t ui;
 gun_t gun;
 pid_t pid;
+
+static uint16_t adc_calibration[3] = {
+    587, 751, 850
+};
 
 static const uint8_t custom_symbols[6][8] = {
     {
@@ -346,30 +347,50 @@ uint16_t adc_to_temp(uint16_t adc) {
     uint16_t temp;
     if (adc <= adc_ambient) {
         temp = temp_ambient;
-    } else if (adc < adc_200) {
-        temp = interpolate(adc, adc_ambient, adc_200, temp_ambient, temp_200);
-    } else if (adc < adc_300) {
-        temp = interpolate(adc, adc_200, adc_300, temp_200, temp_300);
+    } else if (adc < adc_calibration[0]) {
+        temp = interpolate(adc, adc_ambient, adc_calibration[0], temp_ambient, temp_200);
+    } else if (adc <= adc_calibration[1]) {
+        temp = interpolate(adc, adc_calibration[0], adc_calibration[1], temp_200, temp_300);
+    } else if (adc <= adc_calibration[2]) {
+        temp = interpolate(adc, adc_calibration[1], adc_calibration[2], temp_300, temp_400);
     } else {
-        temp = interpolate(adc, adc_300, adc_400, temp_300, temp_400);
+        temp = interpolate(adc, adc_calibration[0], adc_calibration[2], temp_200, temp_400);
     }
     return temp;
 }
 
 uint16_t temp_to_adc(uint16_t temp) {
-    temp = clamp(temp, 150, 500);
-    uint16_t adc;
+    temp = clamp(temp, TEMP_MIN, TEMP_MAX);
 
-    if (temp >= temp_300){
-        adc = interpolate(temp + 1, temp_300, temp_400, adc_300, adc_400);
+    uint16_t left = 0;
+    uint16_t right = 1023;
+    uint16_t adc = interpolate(temp, temp_200, temp_400, adc_calibration[0], adc_calibration[2]);
+
+    if (adc > (left + right) / 2){
+        adc -= (right - left) / 4;
     } else {
-        adc = interpolate(temp + 1, temp_200, temp_300, adc_200, adc_300);
+        adc += (right - left) / 4;
     } 
-    for (uint8_t i=0 ; i<10 ; i++) {
-        if (adc_to_temp(adc) <= temp)
-            break;
-
-        adc--;
+    for (uint8_t i=0 ; i<20 ; i++) {
+        uint16_t temp_h = adc_to_temp(adc);
+        if (temp_h == temp) {
+            return adc;
+        }
+        uint16_t new_adc;
+        if (temp_h < temp) {
+            left = adc;
+            new_adc = (left + right) / 2;
+            if (new_adc == adc) {
+                new_adc = adc + 1;
+            }
+        } else {
+            right = adc;
+            new_adc = (left + right) / 2;
+            if (new_adc == adc) {
+                new_adc = adc - 1;
+            }
+        }
+        adc = new_adc;
     }
     return adc;
 }
@@ -1052,6 +1073,9 @@ void ui_sync_encoder(ui_t *ui) {
             } else {
                 encoder_config(&encoder, ui->fan_set, MIN_FAN_SPEED, MAX_FAN_SPEED, 5, 5, false);
             }
+            break;
+        case UI_CALIB:
+            encoder_config(&encoder, ui->calib_point, CALIB_TEMP_MIN, CALIB_TEMP_MAX, 1, 1, true);
             break;
 
         default:
