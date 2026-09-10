@@ -173,18 +173,13 @@ typedef struct {
     bool cool_notified;
     uint32_t clear_used_ms;
     bool display_dirty;
+    uint32_t tune_heat_ms;
 } ui_t;
-
-typedef struct {
-    bool full_second_line;
-    char temp_units;
-} display_t;
 
 reed_t reed;
 encoder_t encoder;
 button_t enc_button;
 ui_t ui;
-display_t display;
 gun_t gun;
 pid_t pid;
 
@@ -745,6 +740,18 @@ void display_t_set(uint16_t t) {
     lcd.print(buff);
 }
 
+void display_t_internal(uint16_t t) {
+    char buff[6];
+    lcd.setCursor(0, 1);
+    if (t < 1023) {
+        snprintf(buff, sizeof(buff), "%4u ", t);
+    } else {
+        lcd.print("xxxx");
+        return;
+    }
+    lcd.print(buff);
+}
+
 void display_t_curr(uint16_t t) {
     char buff[10];
 
@@ -1069,6 +1076,7 @@ void ui_init(ui_t *ui) {
     ui->cool_notified = false;
     ui->clear_used_ms = 0;
     ui->display_dirty = true;
+    ui->tune_heat_ms = 0;
     ui_sync_encoder(ui);
 }
 
@@ -1103,6 +1111,18 @@ void config_init(ui_t *ui) {
     Serial.print("CONFIG: INIT");
 }
 
+void tune_init(ui_t *ui) {
+    ui->tune_on = false;
+    ui->tune_heat_ms = 0;
+    ui->tune_power = MAX_FIXED_POWER >> 2;
+    ui->display_dirty = true;
+    ui_sync_encoder(ui);
+    lcd.clear();
+    display_msg_tune();
+    display_msg_off();
+    Serial.println("TUNE : INIT");
+}
+
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
 
@@ -1117,6 +1137,9 @@ void ui_set_screen(ui_t *ui, ui_page_t next) {
 
         case UI_CONFIG:
             config_init(ui);
+            break;
+        case UI_TUNE:
+            tune_init(ui);
             break;
 
         default:
@@ -1176,6 +1199,10 @@ void tune_rotate(ui_t *ui, int16_t delta) {
     int16_t pwr = ui->tune_power + delta;
     ui->tune_power = clamp(pwr, 0, MAX_FIXED_POWER);
     ui->display_dirty = true;
+    if (ui->tune_on) {
+        ui->tune_heat_ms = millis();
+        gun_fix_power(&gun, ui->tune_power);
+    }
     Serial.print("TUNE PWR = ");
     Serial.println(ui->tune_power);
 }
@@ -1264,10 +1291,17 @@ void config_short_press(ui_t *ui) {
 
 void tune_short_press(ui_t *ui) {
     if (ui->tune_on) {
+        gun_fix_power(&gun, 0);
         ui->tune_on = false;
+        ui->display_dirty = true;
+        display_msg_off();
         Serial.println("TUNE: OFF");
     } else {
         ui->tune_on = true;
+        ui->tune_heat_ms = millis();
+        gun_fix_power(&gun, ui->tune_power);
+        ui->display_dirty = true;
+        display_msg_on();
         Serial.print("TUNE: ON, power = ");
         Serial.println(ui->tune_power);
     }
@@ -1299,7 +1333,10 @@ void ui_short_press(ui_t *ui) {
 
 //Long Press
 void tune_long_press(ui_t *ui) {
+    gun_fix_power(&gun, 0);
     ui->tune_on = false;
+    ui->tune_heat_ms = 0;
+    ui->display_dirty = true;
     Serial.print("TUNE: OFF");
     Serial.println("TUNE -> MAIN");
     ui_set_screen(ui, UI_MAIN);
@@ -1531,6 +1568,62 @@ void config_show(ui_t *ui) {
     ui->display_dirty = false;
 }
 
+void tune_show(ui_t *ui) {
+    static uint32_t last_update = 0;
+    static uint16_t last_temp = 0;
+    static uint8_t last_power = 0;
+    static bool last_on = false;
+
+    uint32_t now = millis();
+    bool periodic = (now - last_update >= 500);
+    if (!ui->display_dirty && !periodic) {
+        return;
+    }
+    last_update = now;
+    uint16_t temp = history_last(&gun.temp_history);
+    uint8_t power;
+
+    if (ui->tune_on) {
+        power = gun.actual_power;
+    } else {
+        power = ui->tune_power;
+    }
+    if (ui->display_dirty) {
+        display_t_internal(temp);
+        display_power(power, true);
+        if (ui->tune_on) {
+            display_msg_on();
+        } else {
+            display_msg_off();
+        }
+        last_temp = temp;
+        last_power = power;
+        last_on = ui->tune_on;
+        ui->display_dirty=false;
+    } else {
+        if (temp != last_temp) {
+            display_t_internal(temp);
+            last_temp = temp;
+        }
+        if (power != last_power) {
+            display_power(power, true);
+            last_power = power;
+        }
+        if (ui->tune_on != last_on) {
+            if (ui->tune_on) {
+                display_msg_on();
+            } else {
+                display_msg_off();
+            }
+            last_on = ui->tune_on;
+        }
+    }
+    if (ui->tune_heat_ms && ((now - ui->tune_heat_ms) > 3000) && (history_dispersion(&gun.temp_history) < 10) && (power >1)) {
+        buzzer_short_beep();
+        ui->tune_heat_ms = 0;
+    }
+}
+
 void debug_gun(void) {
     static uint32_t last = 0;
     if (millis() - last < 500) {
@@ -1657,6 +1750,8 @@ void loop() {
             config_show(&ui);
             break;
 
+        case UI_TUNE:
+            tune_show(&ui);
         default:
             break;
     }
