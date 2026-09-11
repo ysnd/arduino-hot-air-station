@@ -149,9 +149,9 @@ typedef enum {
 } config_mode_t;
 
 typedef enum {
-    CALIB_TEMP_MIN,
-    CALIB_TEMP_MID,
-    CALIB_TEMP_MAX
+    CALIB_POINT_200,
+    CALIB_POINT_300,
+    CALIB_POINT_400
 } calib_point_t;
 
 typedef struct {
@@ -171,6 +171,10 @@ typedef struct {
     uint32_t clear_used_ms;
     bool display_dirty;
     uint32_t tune_heat_ms;
+    uint16_t calib_temp[2][3];
+    uint16_t calib_preset_temp;
+    bool calib_ready;
+    bool calib_tune;
 } ui_t;
 
 reed_t reed;
@@ -394,6 +398,34 @@ uint16_t temp_to_adc(uint16_t temp) {
     }
     return adc;
 }
+
+//calibration 
+void build_calibration(ui_t *ui, uint16_t tip[3]) {
+    int32_t sum_xy = 0;
+    int32_t sum_x = 0;
+    int32_t sum_y = 0;
+    int32_t sum_x2 = 0;
+
+    for (uint8_t i=0; i<3; i++) {
+        uint16_t x = ui->calib_temp[0][i];
+        uint16_t y = ui->calib_temp[1][i];
+
+        sum_xy += x * y;
+        sum_x += x;
+        sum_y += y;
+        sum_x2 += x * x;
+    }
+    double a = (double)(3 * sum_xy - sum_x * sum_y) / (double)(3 * sum_x2 - sum_x * sum_x);
+    double b = ((double)sum_y - a * (double)sum_x) / 3.0;
+    for (uint8_t i=0; i<3; i++) {
+        double temp = a * (double)ui->calib_temp[0][i] + b;
+        tip[i] = (uint16_t)round(temp);
+    }
+    if (tip[2] > 900) {
+        tip[2] = 900;
+    }
+}
+
 
 //PID
 void pid_reset(pid_t *pid, int16_t temp) {
@@ -785,6 +817,18 @@ void display_t_curr(uint16_t t) {
     }
 }
 
+void display_t_real(uint16_t t) {
+    char buff[6];
+    lcd.setCursor(11, 1);
+    if (t < 1000) {
+        snprintf(buff, sizeof(buff), ">%3u%c", t, 1);
+        lcd.print(buff);
+    } else {
+        lcd.print("xxx");
+    }
+}
+
+
 void display_fan(uint8_t s) {
     s = interpolate(s, 0, 255, 0, 99);
     lcd.setCursor(6, 0);
@@ -1075,7 +1119,7 @@ void ui_sync_encoder(ui_t *ui) {
             }
             break;
         case UI_CALIB:
-            encoder_config(&encoder, ui->calib_point, CALIB_TEMP_MIN, CALIB_TEMP_MAX, 1, 1, true);
+            encoder_config(&encoder, ui->calib_point, CALIB_POINT_200, CALIB_POINT_400, 1, 1, true);
             break;
 
         default:
@@ -1089,18 +1133,21 @@ void ui_init(ui_t *ui) {
     ui->main_mode = MAIN_MODE_TEMP;
     ui->work_mode = WORK_MODE_FAN;
     ui->config_mode = CONFIG_CALIB;
-    ui->calib_point = CALIB_TEMP_MIN;
+    ui->calib_point = CALIB_POINT_200;
     ui->temp_set = 300;
     ui->fan_set = MIN_FAN_SPEED;
     ui->tune_on = false;
     ui->tune_power = MAX_FIXED_POWER >> 2;
     ui->work_ready = false;
+    ui->calib_tune = false;
+    ui->calib_ready = false;
     ui->encoder_last_pos = 0;
     ui->used = false;
     ui->cool_notified = false;
     ui->clear_used_ms = 0;
     ui->display_dirty = true;
     ui->tune_heat_ms = 0;
+    ui->calib_preset_temp = 0;
     ui_sync_encoder(ui);
 }
 
@@ -1147,6 +1194,24 @@ void tune_init(ui_t *ui) {
     Serial.println("TUNE : INIT");
 }
 
+void calib_init(ui_t *ui) {
+    ui->calib_point = CALIB_POINT_200; 
+    ui->calib_tune = false;
+    ui->calib_ready = false;
+    gun_switch_power(&gun, false);
+    ui->calib_temp[0][0] = temp_200;
+    ui->calib_temp[0][1] = temp_300;
+    ui->calib_temp[0][2] = temp_400;
+    for (uint8_t i=0; i<3; i++ ) {
+        ui->calib_temp[1][i] = adc_calibration[i];
+    }
+    lcd.clear();
+    display_msg_off();
+    ui->display_dirty = true;
+    ui_sync_encoder(ui);
+    Serial.println("CALIB: INIT");
+}
+
 void ui_set_screen(ui_t *ui, ui_page_t next) {
     ui->current = next;
 
@@ -1164,6 +1229,10 @@ void ui_set_screen(ui_t *ui, ui_page_t next) {
             break;
         case UI_TUNE:
             tune_init(ui);
+            break;
+
+        case UI_CALIB:
+            calib_init(ui);
             break;
 
         default:
@@ -1231,6 +1300,16 @@ void tune_rotate(ui_t *ui, int16_t delta) {
     Serial.println(ui->tune_power);
 }
 
+void calib_rotate(ui_t *ui, int16_t delta) {
+    if (!ui->calib_tune) {
+        int16_t val = ui->calib_point + delta;
+        ui->calib_point = (calib_point_t)clamp(val, CALIB_POINT_200, CALIB_POINT_400);
+        uint16_t temp = ui->calib_temp[0][ui->calib_point];
+        gun.temp_set = temp_to_adc(temp);
+    }
+    ui->display_dirty = true;
+}
+
 void ui_rotate(ui_t *ui, int16_t delta) {
     switch (ui->current) {
         case UI_MAIN:
@@ -1247,6 +1326,10 @@ void ui_rotate(ui_t *ui, int16_t delta) {
 
         case UI_WORK:
             work_rotate(ui, delta);
+            break;
+
+        case UI_CALIB:
+            calib_rotate(ui, delta);
             break;
 
         default:
@@ -1331,6 +1414,31 @@ void tune_short_press(ui_t *ui) {
     }
 }
 
+void calib_short_press(ui_t *ui) {
+    if (ui->calib_tune) {
+        ui->calib_tune = false;
+        ui->calib_temp[0][ui->calib_point] = encoder_read(&encoder);
+        ui->calib_temp[1][ui->calib_point] = history_avg(&gun.temp_history);
+        gun_switch_power(&gun, false);
+        display_msg_off();
+        ui_sync_encoder(ui);
+        uint16_t tip[3];
+        build_calibration(ui, tip);
+        for (uint8_t i = 0; i < 3; i++) {
+            adc_calibration[i] = tip[i];
+        }
+    } else {
+        ui->calib_tune = true;
+        uint16_t temp = ui->calib_temp[0][ui->calib_point];
+        encoder_config(&encoder, temp, 40, 600, 1, 1, false);
+        gun.temp_set = temp_to_adc(temp);
+        gun_switch_power(&gun, true);
+        display_msg_on();
+    }
+    ui->calib_ready = false;
+    ui->display_dirty = true;
+}
+
 void ui_short_press(ui_t *ui) {
     Serial.println("UI SHORTPRESS");
     switch (ui->current) {
@@ -1340,6 +1448,10 @@ void ui_short_press(ui_t *ui) {
 
         case UI_CONFIG:
             config_short_press(ui);
+            break;
+
+        case UI_CALIB:
+            calib_short_press(ui);
             break;
 
         case UI_TUNE:
@@ -1364,6 +1476,19 @@ void tune_long_press(ui_t *ui) {
     Serial.print("TUNE: OFF");
     Serial.println("TUNE -> MAIN");
     ui_set_screen(ui, UI_MAIN);
+}
+
+void calib_long_press(ui_t *ui) {
+    gun_switch_power(&gun, false);
+    uint16_t tip[3];
+    build_calibration(ui, tip);
+    for (uint8_t i=0; i<3; i++) {
+        adc_calibration[i]=tip[i];
+    }
+    ui->calib_tune = false;
+    ui->calib_ready = false;
+    ui_set_screen(ui, UI_MAIN);
+    Serial.println("CALIB: ->APPLIED");
 }
 
 void ui_long_press(ui_t *ui) {
@@ -1415,7 +1540,6 @@ void main_show(ui_t *ui) {
     static uint8_t last_power;
     static bool last_cold;
     static bool last_used;
-
     uint32_t now = millis();
 
     bool periodic = (now - last_update >= 500);
@@ -1423,7 +1547,6 @@ void main_show(ui_t *ui) {
     if (!ui->display_dirty && !periodic) {
         return;
     }
-
     last_update = now;
 
     uint16_t temp_curr = adc_to_temp(history_avg(&gun.temp_history));
@@ -1648,6 +1771,51 @@ void tune_show(ui_t *ui) {
     }
 }
 
+void calib_show(ui_t *ui) {
+    static uint32_t last_update = 0;
+    uint32_t now = millis();
+
+    if (now - last_update < 1000) {
+        return;
+    }
+    last_update = now;
+    uint16_t temp = history_avg(&gun.temp_history);
+    uint16_t temp_set = gun.temp_set;
+    uint16_t temp_h = adc_to_temp(temp);
+    uint16_t temp_set_h = adc_to_temp(temp_set);
+
+    display_t_set(temp_set_h);
+    display_t_curr(temp_h);
+
+    uint8_t power = gun.actual_power;
+    
+    if (!gun.active) {
+        power = 0;
+    }
+    display_power(power, true);
+
+    if (ui->calib_tune && abs((int)temp_set - (int)temp) < 5 && history_dispersion(&gun.temp_history) <= 20 && power > 1) {
+        if (!ui->calib_ready) {
+            buzzer_short_beep();
+            display_msg_ready();
+            ui->calib_ready = true;
+            ui->display_dirty = true;
+        }
+    }
+    if (ui->calib_ready) {
+        display_t_real(encoder_read(&encoder));
+    }
+    else if (gun.active) {
+        display_fan(gun.fan_speed);
+    }
+    if (ui->calib_tune && !gun.active) {
+        display_msg_off();
+        ui->calib_tune = false;
+        ui->calib_ready = false;
+        ui->display_dirty = true;
+    }
+}
+
 void debug_gun(void) {
     static uint32_t last = 0;
     if (millis() - last < 500) {
@@ -1776,6 +1944,12 @@ void loop() {
 
         case UI_TUNE:
             tune_show(&ui);
+            break;
+
+        case UI_CALIB:
+            calib_show(&ui);
+            break;
+
         default:
             break;
     }
