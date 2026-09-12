@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <LCD_I2C.h>
+#include <EEPROM.h>
 
 #define ZC_PIN 2
 #define TRIAC_PIN 7
@@ -155,6 +156,13 @@ typedef enum {
 } calib_point_t;
 
 typedef struct {
+    uint32_t calibration;
+    uint16_t temp;
+    uint8_t fan;
+    uint8_t off_timeout;
+} config_t;
+
+typedef struct {
     ui_page_t current;
     main_mode_t main_mode;
     work_mode_t work_mode;
@@ -177,16 +185,29 @@ typedef struct {
     bool calib_tune;
 } ui_t;
 
+
 reed_t reed;
 encoder_t encoder;
 button_t enc_button;
 ui_t ui;
+config_t config;
 gun_t gun;
 pid_t pid;
+
+static bool config_can_write = false;
+static uint16_t config_r_addr = 0;
+static uint16_t config_w_addr = 0;
+static uint16_t config_e_length = 0;
+static uint32_t config_next_rec_id = 0;
+static uint8_t config_record_size = 16;
 
 static uint16_t adc_calibration[3] = {
     587, 751, 850
 };
+
+static const uint16_t def_tip[3] = {587, 751, 850};
+static const uint16_t def_temp = 600;
+static const uint8_t def_fan = 64;
 
 static const uint8_t custom_symbols[6][8] = {
     {
@@ -399,6 +420,197 @@ uint16_t temp_to_adc(uint16_t temp) {
     return adc;
 }
 
+//eeprom
+static bool cfg_read_record(uint16_t addr, uint32_t *rec_id) {
+    uint8_t buff[16];
+    for (uint8_t i=0; i<config_record_size; i++) {
+        buff[i] = EEPROM.read(addr + i);
+    }
+    uint8_t summ = 0;
+    for (uint8_t i = 0; i<sizeof(config_t) + 4; i++) {
+        summ <<= 2;
+        summ += buff[i];
+    }
+    summ++;
+    if (summ != buff[config_record_size - 1]) {
+        return false;
+    }
+    uint32_t id = 0;
+    for (int8_t i=3; i>=0; i--) {
+        id <<= 8;
+        id |= buff[(uint8_t)i];
+    }
+    *rec_id = id;
+    memcpy(&config, &buff[4], sizeof(config_t));
+    return true;
+}
+
+void cfg_init(void) {
+    config_e_length = EEPROM.length();
+    uint32_t rec_id;
+    uint32_t min_rec_id = 0xffffffff;
+    uint16_t min_rec_addr = 0;
+    uint32_t max_rec_id = 0;
+    uint16_t max_rec_addr = 0;
+    uint8_t records = 0;
+    config_next_rec_id = 0;
+
+    for (uint16_t addr = 0; addr<config_e_length; addr += config_record_size) {
+        if (cfg_read_record(addr, &rec_id)) {
+            records++;
+            if (min_rec_id > rec_id) {
+                min_rec_id = rec_id;
+                min_rec_addr = addr;
+            }
+            if (max_rec_id < rec_id) {
+                max_rec_id = rec_id;
+                max_rec_addr = addr;
+            }
+        } else {
+            break;
+        }
+    }
+    if (records == 0) {
+        config_w_addr = 0;
+        config_r_addr = 0;
+        config_can_write = true;
+        return;
+    }
+    config_r_addr = max_rec_addr;
+    if (records < (config_e_length / config_record_size)) {
+        config_w_addr = max_rec_addr + config_record_size;
+        if (config_w_addr > config_e_length) {
+            config_w_addr = 0;
+        }
+    } else {
+        config_w_addr = min_rec_addr;
+    }
+    config_can_write = true;
+}
+
+bool cfg_load(void) {
+    bool valid = cfg_read_record(config_r_addr, &config_next_rec_id);
+    config_next_rec_id++;
+    return valid;
+}
+
+void cfg_get(config_t *cfg) {
+    memcpy(cfg, &config, sizeof(config_t));
+}
+
+void cfg_update(const config_t *cfg) {
+    memcpy(&config, cfg, sizeof(config_t));
+}
+
+bool cfg_save(void) {
+    if (!config_can_write) {
+       return false;
+    }
+    if (config_next_rec_id == 0) {
+        config_next_rec_id = 1;
+    }
+    uint16_t start_write = config_w_addr;
+    uint32_t nxt = config_next_rec_id;
+    uint8_t summ = 0;
+
+    //record 4 byte
+    for (uint8_t i = 0; i<4; i++) {
+        EEPROM.write(start_write++, nxt & 0xff);
+        summ <<= 2;
+        summ += nxt;
+        nxt >>= 8;
+    }
+    //config data: 8 byte 
+    uint8_t *p = (uint8_t *)&config;
+
+    for (uint8_t i=0; i < sizeof(config_t); i++) {
+        summ <<= 2;
+        summ += p[i];
+        EEPROM.write(start_write++, p[i]);
+    }
+    //checksum
+    summ++;
+    EEPROM.write(config_w_addr + config_record_size - 1, summ);
+    
+    //current record becomes latest record 
+    config_r_addr = config_w_addr;
+    //advance write address
+    config_w_addr += config_record_size;
+
+    if (config_w_addr > EEPROM.length()) {
+        config_w_addr = 0;
+    }
+    //next recodrd ID 
+    config_next_rec_id++;
+    return true;
+}
+
+bool cfg_save_config(const config_t *cfg) {
+    cfg_update(cfg);
+    return cfg_save();
+}
+
+void hotgun_cfg_set_defaults(bool write) {
+    adc_calibration[0] = def_tip[0];
+    adc_calibration[1] = def_tip[1];
+    adc_calibration[2] = def_tip[2];
+
+    config.temp = def_temp;
+    config.fan = def_fan;
+
+    if (write) {
+        uint32_t cd = 0;
+
+        cd |= ((uint32_t)adc_calibration[0] & 0x3FF);
+        cd |= ((uint32_t)adc_calibration[1] & 0x3FF) << 10;
+        cd |= ((uint32_t)adc_calibration[2] & 0x3FF) << 20;
+        config.calibration = cd;
+        cfg_save();
+    }
+}
+
+void hotgun_cfg_init(void) {
+    cfg_init();
+    if (!cfg_load()) {
+        hotgun_cfg_set_defaults(false);
+        return;
+    }
+
+    uint32_t cd = config.calibration;
+
+    adc_calibration[0] = cd & 0x3FF;
+    cd >>= 10;
+    adc_calibration[1] = cd & 0x3FF;
+    cd >>= 10;
+    adc_calibration[2] = cd & 0x3FF;
+    cd >>= 10;
+    if ((adc_calibration[0] >= adc_calibration[1]) || (adc_calibration[1] >= adc_calibration[2])) {
+        hotgun_cfg_set_defaults(false);
+    }
+}
+
+hotgun_cfg_save(uint16_t temp_c, uint8_t fan) {
+    config.temp = temp_to_adc(temp_c);
+    config.fan = fan;
+
+    uint32_t cd = 0;
+
+    cd |= ((uint32_t)adc_calibration[0] & 0x3FF);
+    cd |= ((uint32_t)adc_calibration[1] & 0x3FF) << 10;
+    cd |= ((uint32_t)adc_calibration[2] & 0x3FF) << 20;
+
+    config.calibration = cd;
+    cfg_save();
+}
+
+uint16_t hotgun_cfg_temp_preset(void) {
+    return config.temp;
+}
+
+uint16_t hotgun_cfg_fan_preset(void) {
+    return config.fan;
+}
+
 //calibration 
 void build_calibration(ui_t *ui, uint16_t tip[3]) {
     int32_t sum_xy = 0;
@@ -511,8 +723,8 @@ void fan_set(gun_t *gun, uint8_t duty) {
 
 void gun_init(gun_t *gun) {
     gun->mode = POWER_OFF;
-    gun->temp_set = temp_to_adc(300);
-    gun->fan_speed = 120;
+    gun->temp_set = config.temp;
+    gun->fan_speed = config.fan;
     gun->actual_fan = 0;
     gun->actual_power = 0;
     gun->fix_power = 0;
@@ -1134,8 +1346,8 @@ void ui_init(ui_t *ui) {
     ui->work_mode = WORK_MODE_FAN;
     ui->config_mode = CONFIG_CALIB;
     ui->calib_point = CALIB_POINT_200;
-    ui->temp_set = 300;
-    ui->fan_set = MIN_FAN_SPEED;
+    ui->temp_set = adc_to_temp(config.temp);
+    ui->fan_set = config.fan;
     ui->tune_on = false;
     ui->tune_power = MAX_FIXED_POWER >> 2;
     ui->work_ready = false;
@@ -1375,8 +1587,9 @@ void config_short_press(ui_t *ui) {
             break;
 
         case CONFIG_SAVE: 
+            hotgun_cfg_save(ui->temp_set, ui->fan_set);
             ui_set_screen(ui, UI_MAIN);
-            Serial.println("CONFIG: Save selected");
+            Serial.println("CONFIG: SAVED");
             break;
 
         case CONFIG_CANCEL:
@@ -1384,10 +1597,9 @@ void config_short_press(ui_t *ui) {
             Serial.println("CONFIG -> MAIN");
             break;
 
-        case CONFIG_DEFAULTS:
-            Serial.println("CONFIG: DEFAULTS selected");
-            //TODO:
-            //config_set_defaults(true);
+        case CONFIG_DEFAULTS: 
+            hotgun_cfg_set_defaults(true);
+            Serial.println("CONFIG: DEFAULTS");
             ui_set_screen(ui, UI_MAIN);
             break;
 
@@ -1629,7 +1841,6 @@ void work_show(ui_t *ui) {
     static uint8_t last_fan_curr;
     static uint8_t last_power;
     static bool last_ready_showing;
-
     uint32_t now = millis();
 
     bool periodic = (now - last_update >= 500);
@@ -1637,7 +1848,6 @@ void work_show(ui_t *ui) {
     if (!ui->display_dirty && !periodic) {
         return;
     }
-
     last_update = now;
 
     uint16_t temp_curr = adc_to_temp(history_avg(&gun.temp_history));
@@ -1865,6 +2075,7 @@ void setup() {
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(TRIAC_PIN, LOW);
     digitalWrite(BUZZER_PIN, LOW);
+    hotgun_cfg_init();
     gun_init(&gun);
     encoder_init(&encoder, ENC_A, ENC_B, 0);
     button_init(&enc_button, ENC_SW);
@@ -1955,4 +2166,3 @@ void loop() {
     }
     //debug_gun();
 }
-
