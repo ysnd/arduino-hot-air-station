@@ -589,7 +589,7 @@ void hotgun_cfg_init(void) {
     }
 }
 
-hotgun_cfg_save(uint16_t temp_c, uint8_t fan) {
+void hotgun_cfg_save(uint16_t temp_c, uint8_t fan) {
     config.temp = temp_to_adc(temp_c);
     config.fan = fan;
 
@@ -600,6 +600,12 @@ hotgun_cfg_save(uint16_t temp_c, uint8_t fan) {
     cd |= ((uint32_t)adc_calibration[2] & 0x3FF) << 20;
 
     config.calibration = cd;
+    Serial.print("SAVE CALIB: ");
+    Serial.print(adc_calibration[0]);
+    Serial.print(", ");
+    Serial.print(adc_calibration[1]);
+    Serial.print(", ");
+    Serial.println(adc_calibration[2]);
     cfg_save();
 }
 
@@ -2026,48 +2032,6 @@ void calib_show(ui_t *ui) {
     }
 }
 
-void debug_gun(void) {
-    static uint32_t last = 0;
-    if (millis() - last < 500) {
-        return;
-    }
-
-    Serial.print("UI=");
-    Serial.print(ui.current);
-
-    Serial.print(" TEMP SET=");
-    Serial.print(ui.temp_set);
-
-    Serial.print(" FAN SET=");
-    Serial.print(ui.fan_set);
-
-    Serial.print(" | GUN_MODE=");
-    Serial.print(gun.mode);
-
-    Serial.print(" GUN_TEMP_SET=");
-    Serial.print(gun.temp_set);
-
-    Serial.print(" FAN=");
-    Serial.print(gun.actual_fan);
-
-    Serial.print(" POWER=");
-    Serial.print(gun.actual_power);
-
-    Serial.print(" DOCKED=");
-    Serial.print(reed.state);
-
-    uint16_t raw = analogRead(THERMOCOUPLE_PIN);
-    uint16_t filtered = emp_read(&gun.sensor);
-    uint16_t temp = adc_to_temp(filtered);
-
-    Serial.print(" | RAW=");
-    Serial.print(raw);
-    Serial.print(" FILTER=");
-    Serial.print(filtered);
-    Serial.print(" TEMP=");
-    Serial.println(temp);
-}
-
 void setup() {
     Serial.begin(115200);
     pinMode(ZC_PIN, INPUT_PULLUP);
@@ -2137,9 +2101,6 @@ void loop() {
         default: 
             break;
     }
-    if (button_tick(&enc_button)) {
-        Serial.println("TICK");
-    }
     switch (ui.current) {
         case UI_MAIN:
             main_show(&ui);
@@ -2164,5 +2125,4 @@ void loop() {
         default:
             break;
     }
-    //debug_gun();
 }
